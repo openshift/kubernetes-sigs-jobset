@@ -1,0 +1,47 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: '[]'
+    capabilities: Basic Install
+  name: jobset.v0.0.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: JobSet is the Schema for the jobsets API
+      displayName: Job Set
+      kind: JobSet
+      name: jobsets.jobset.x-k8s.io
+      version: v1alpha2
+  description: jobset
+  displayName: jobset
+  icon:
+  - base64data: ""
+    mediatype: ""
+  install:
+    spec:
+      deployments: null
+    strategy: ""
+  installModes:
+  - supported: false
+    type: OwnNamespace
+  - supported: false
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
+  keywords:
+  - test
+  links:
+  - name: Kueue
+    url: https://jobset.domain
+  maintainers:
+  - email: kehannon@redhat.com
+    name: kevinhannon
+  maturity: beta
+  provider:
+    name: kubernetes-sigs
+  version: 0.0.0

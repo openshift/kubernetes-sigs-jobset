@@ -182,7 +182,7 @@ spec:
                 - --leader-elect
                 command:
                 - /manager
-                image: quay.io/redhat-user-workloads/kueue-workloads-tenant/kubernetes-sigs-jobset@sha256:493a23302b343600e5f261f75f6e67f4e4667bf39814b79618d33736ee8b2a72
+                image: quay.io/redhat-user-workloads/kueue-workloads-tenant/kubernetes-sigs-jobset@sha256:2c02db0cff39c074945f59dc93c9bf6f99b4c14daf0be377a97b0ae1a7ee40b0
                 livenessProbe:
                   httpGet:
                     path: /healthz

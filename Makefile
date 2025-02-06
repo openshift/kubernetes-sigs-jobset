@@ -1,10 +1,3 @@
-# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
-ifeq (,$(shell go env GOBIN))
-        GOBIN=$(shell go env GOPATH)/bin
-else 
-        GOBIN=$(shell go env GOBIN)
-endif
-
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.30
 
@@ -31,13 +24,6 @@ IMAGE_REGISTRY ?= gcr.io/k8s-staging-jobset
 IMAGE_NAME := jobset
 IMAGE_REPO ?= $(IMAGE_REGISTRY)/$(IMAGE_NAME)
 IMAGE_TAG ?= $(IMAGE_REPO):$(GIT_TAG)
-
-ifdef EXTRA_TAG
-IMAGE_EXTRA_TAG ?= $(IMAGE_REPO):$(EXTRA_TAG)
-endif
-ifdef IMAGE_EXTRA_TAG
-IMAGE_BUILD_EXTRA_OPTS += -t $(IMAGE_EXTRA_TAG)
-endif
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
@@ -320,4 +306,3 @@ GENREF = $(PROJECT_DIR)/bin/genref
 .PHONY: genref
 genref: ## Download genref locally if necessary.
 	@GOBIN=$(PROJECT_DIR)/bin $(GO_CMD) install github.com/kubernetes-sigs/reference-docs/genref@v0.28.0
-

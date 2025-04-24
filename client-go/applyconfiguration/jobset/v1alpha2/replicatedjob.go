@@ -15,16 +15,17 @@ limitations under the License.
 package v1alpha2
 
 import (
-	v1 "k8s.io/api/batch/v1"
+	v1 "k8s.io/client-go/applyconfigurations/batch/v1"
 )
 
 // ReplicatedJobApplyConfiguration represents a declarative configuration of the ReplicatedJob type for use
 // with apply.
 type ReplicatedJobApplyConfiguration struct {
-	Name      *string                       `json:"name,omitempty"`
-	Template  *v1.JobTemplateSpec           `json:"template,omitempty"`
-	Replicas  *int32                        `json:"replicas,omitempty"`
-	DependsOn []DependsOnApplyConfiguration `json:"dependsOn,omitempty"`
+	Name      *string                               `json:"name,omitempty"`
+	GroupName *string                               `json:"groupName,omitempty"`
+	Template  *v1.JobTemplateSpecApplyConfiguration `json:"template,omitempty"`
+	Replicas  *int32                                `json:"replicas,omitempty"`
+	DependsOn []DependsOnApplyConfiguration         `json:"dependsOn,omitempty"`
 }
 
 // ReplicatedJobApplyConfiguration constructs a declarative configuration of the ReplicatedJob type for use with
@@ -41,11 +42,19 @@ func (b *ReplicatedJobApplyConfiguration) WithName(value string) *ReplicatedJobA
 	return b
 }
 
+// WithGroupName sets the GroupName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the GroupName field is set to the value of the last call.
+func (b *ReplicatedJobApplyConfiguration) WithGroupName(value string) *ReplicatedJobApplyConfiguration {
+	b.GroupName = &value
+	return b
+}
+
 // WithTemplate sets the Template field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Template field is set to the value of the last call.
-func (b *ReplicatedJobApplyConfiguration) WithTemplate(value v1.JobTemplateSpec) *ReplicatedJobApplyConfiguration {
-	b.Template = &value
+func (b *ReplicatedJobApplyConfiguration) WithTemplate(value *v1.JobTemplateSpecApplyConfiguration) *ReplicatedJobApplyConfiguration {
+	b.Template = value
 	return b
 }
 

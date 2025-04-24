@@ -77,7 +77,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -97,7 +97,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.NonIndexedCompletion),
+									CompletionMode: ptr.To(batchv1.NonIndexedCompletion),
 								},
 							},
 						},
@@ -115,7 +115,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.NonIndexedCompletion),
+									CompletionMode: ptr.To(batchv1.NonIndexedCompletion),
 								},
 							},
 						},
@@ -138,7 +138,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -156,7 +156,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -177,7 +177,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.NonIndexedCompletion),
+									CompletionMode: ptr.To(batchv1.NonIndexedCompletion),
 								},
 							},
 						},
@@ -195,7 +195,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.NonIndexedCompletion),
+									CompletionMode: ptr.To(batchv1.NonIndexedCompletion),
 								},
 							},
 						},
@@ -219,7 +219,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.NonIndexedCompletion),
+									CompletionMode: ptr.To(batchv1.NonIndexedCompletion),
 								},
 							},
 						},
@@ -237,7 +237,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.NonIndexedCompletion),
+									CompletionMode: ptr.To(batchv1.NonIndexedCompletion),
 								},
 							},
 						},
@@ -258,7 +258,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.NonIndexedCompletion),
+									CompletionMode: ptr.To(batchv1.NonIndexedCompletion),
 								},
 							},
 						},
@@ -276,7 +276,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.NonIndexedCompletion),
+									CompletionMode: ptr.To(batchv1.NonIndexedCompletion),
 								},
 							},
 						},
@@ -302,7 +302,7 @@ func TestJobSetDefaulting(t *testing.T) {
 									Template: corev1.PodTemplateSpec{
 										Spec: corev1.PodSpec{},
 									},
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -324,7 +324,7 @@ func TestJobSetDefaulting(t *testing.T) {
 											RestartPolicy: corev1.RestartPolicyOnFailure,
 										},
 									},
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -349,7 +349,7 @@ func TestJobSetDefaulting(t *testing.T) {
 											RestartPolicy: corev1.RestartPolicyAlways,
 										},
 									},
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -371,7 +371,7 @@ func TestJobSetDefaulting(t *testing.T) {
 											RestartPolicy: corev1.RestartPolicyAlways,
 										},
 									},
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -398,7 +398,7 @@ func TestJobSetDefaulting(t *testing.T) {
 											RestartPolicy: corev1.RestartPolicyAlways,
 										},
 									},
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -420,7 +420,7 @@ func TestJobSetDefaulting(t *testing.T) {
 											RestartPolicy: corev1.RestartPolicyAlways,
 										},
 									},
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -447,7 +447,7 @@ func TestJobSetDefaulting(t *testing.T) {
 											RestartPolicy: corev1.RestartPolicyAlways,
 										},
 									},
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -471,7 +471,7 @@ func TestJobSetDefaulting(t *testing.T) {
 											RestartPolicy: corev1.RestartPolicyAlways,
 										},
 									},
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -503,7 +503,7 @@ func TestJobSetDefaulting(t *testing.T) {
 											RestartPolicy: corev1.RestartPolicyAlways,
 										},
 									},
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -529,7 +529,7 @@ func TestJobSetDefaulting(t *testing.T) {
 											RestartPolicy: corev1.RestartPolicyAlways,
 										},
 									},
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -552,7 +552,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -569,7 +569,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -588,7 +588,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -606,7 +606,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -629,7 +629,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -649,7 +649,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -673,7 +673,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -696,7 +696,7 @@ func TestJobSetDefaulting(t *testing.T) {
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template:       TestPodTemplate,
-									CompletionMode: completionModePtr(batchv1.IndexedCompletion),
+									CompletionMode: ptr.To(batchv1.IndexedCompletion),
 								},
 							},
 						},
@@ -798,8 +798,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "test-jobset-replicated-job-0",
-							Replicas: math.MaxInt32,
+							Name:      "test-jobset-replicated-job-0",
+							GroupName: "default",
+							Replicas:  math.MaxInt32,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Parallelism: ptr.To[int32](math.MaxInt32),
@@ -808,8 +809,9 @@ func TestValidateCreate(t *testing.T) {
 							},
 						},
 						{
-							Name:     "test-jobset-replicated-job-1",
-							Replicas: math.MinInt32,
+							Name:      "test-jobset-replicated-job-1",
+							GroupName: "default",
+							Replicas:  math.MinInt32,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Parallelism: ptr.To[int32](math.MinInt32),
@@ -839,8 +841,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "test-jobset-replicated-job-0",
-							Replicas: 1,
+							Name:      "test-jobset-replicated-job-0",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -866,8 +869,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "test-jobset-replicated-job-0",
-							Replicas: 1,
+							Name:      "test-jobset-replicated-job-0",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -900,8 +904,9 @@ func TestValidateCreate(t *testing.T) {
 					},
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "test-jobset-replicated-job-0",
-							Replicas: 1,
+							Name:      "test-jobset-replicated-job-0",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -929,8 +934,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "username.llama65b",
-							Replicas: 1,
+							Name:      "username.llama65b",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -948,6 +954,36 @@ func TestValidateCreate(t *testing.T) {
 			),
 		},
 		{
+			name: "group name is not DNS 1035 compliant",
+			js: &jobset.JobSet{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "JobSet",
+					APIVersion: "jobset.x-k8s.io/v1alpha2",
+				},
+				ObjectMeta: validObjectMeta,
+				Spec: jobset.JobSetSpec{
+					ReplicatedJobs: []jobset.ReplicatedJob{
+						{
+							Name:      "rj",
+							GroupName: strings.Repeat("a", 64),
+							Replicas:  1,
+							Template: batchv1.JobTemplateSpec{
+								Spec: batchv1.JobSpec{
+									Template: validPodTemplateSpec,
+								},
+							},
+						},
+					},
+					SuccessPolicy: &jobset.SuccessPolicy{
+						Operator: jobset.OperatorAll,
+					},
+				},
+			},
+			want: errors.Join(
+				errors.New(groupNameTooLongErrorMsg),
+			),
+		},
+		{
 			name: "jobset name will result in job name being too long",
 			js: &jobset.JobSet{
 				TypeMeta: metav1.TypeMeta{
@@ -960,8 +996,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 101,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  101,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -991,8 +1028,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1023,8 +1061,9 @@ func TestValidateCreate(t *testing.T) {
 					ManagedBy: ptr.To(notDomainPrefixedPathControllerName),
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1049,8 +1088,9 @@ func TestValidateCreate(t *testing.T) {
 					ManagedBy: ptr.To(tooLongControllerName),
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1075,8 +1115,9 @@ func TestValidateCreate(t *testing.T) {
 					ManagedBy: ptr.To(jobset.JobSetControllerName),
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1098,8 +1139,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1124,8 +1166,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1161,8 +1204,9 @@ func TestValidateCreate(t *testing.T) {
 					},
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1195,8 +1239,9 @@ func TestValidateCreate(t *testing.T) {
 					},
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1220,8 +1265,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1248,8 +1294,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1278,8 +1325,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1309,8 +1357,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1339,8 +1388,9 @@ func TestValidateCreate(t *testing.T) {
 				Spec: jobset.JobSetSpec{
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "rj",
-							Replicas: 1,
+							Name:      "rj",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1374,8 +1424,9 @@ func TestValidateCreate(t *testing.T) {
 					},
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "replicatedjob-a",
-							Replicas: 2,
+							Name:      "replicatedjob-a",
+							GroupName: "default",
+							Replicas:  2,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1385,8 +1436,9 @@ func TestValidateCreate(t *testing.T) {
 							},
 						},
 						{
-							Name:     "replicatedjob-b",
-							Replicas: 2,
+							Name:      "replicatedjob-b",
+							GroupName: "default",
+							Replicas:  2,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1415,8 +1467,9 @@ func TestValidateCreate(t *testing.T) {
 					},
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "replicatedjob-a",
-							Replicas: 2,
+							Name:      "replicatedjob-a",
+							GroupName: "default",
+							Replicas:  2,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1426,8 +1479,9 @@ func TestValidateCreate(t *testing.T) {
 							},
 						},
 						{
-							Name:     "replicatedjob-b",
-							Replicas: 2,
+							Name:      "replicatedjob-b",
+							GroupName: "default",
+							Replicas:  2,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1456,8 +1510,9 @@ func TestValidateCreate(t *testing.T) {
 					},
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "replicatedjob-a",
-							Replicas: 2,
+							Name:      "replicatedjob-a",
+							GroupName: "default",
+							Replicas:  2,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1467,8 +1522,9 @@ func TestValidateCreate(t *testing.T) {
 							},
 						},
 						{
-							Name:     "replicatedjob-b",
-							Replicas: 2,
+							Name:      "replicatedjob-b",
+							GroupName: "default",
+							Replicas:  2,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									CompletionMode: ptr.To(batchv1.IndexedCompletion),
@@ -1496,8 +1552,9 @@ func TestValidateCreate(t *testing.T) {
 					SuccessPolicy: &jobset.SuccessPolicy{},
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "job-1",
-							Replicas: 1,
+							Name:      "job-1",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1512,7 +1569,8 @@ func TestValidateCreate(t *testing.T) {
 									Status: "Complete",
 								},
 							},
-							Replicas: 1,
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1527,7 +1585,8 @@ func TestValidateCreate(t *testing.T) {
 									Status: "Complete",
 								},
 							},
-							Replicas: 1,
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1547,8 +1606,9 @@ func TestValidateCreate(t *testing.T) {
 					SuccessPolicy: &jobset.SuccessPolicy{},
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "job-1",
-							Replicas: 1,
+							Name:      "job-1",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1563,7 +1623,8 @@ func TestValidateCreate(t *testing.T) {
 									Status: "Complete",
 								},
 							},
-							Replicas: 1,
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1578,7 +1639,8 @@ func TestValidateCreate(t *testing.T) {
 									Status: "Complete",
 								},
 							},
-							Replicas: 1,
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1598,8 +1660,9 @@ func TestValidateCreate(t *testing.T) {
 					SuccessPolicy: &jobset.SuccessPolicy{},
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "job-1",
-							Replicas: 1,
+							Name:      "job-1",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1614,7 +1677,8 @@ func TestValidateCreate(t *testing.T) {
 									Status: "Complete",
 								},
 							},
-							Replicas: 1,
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1629,7 +1693,8 @@ func TestValidateCreate(t *testing.T) {
 									Status: "Complete",
 								},
 							},
-							Replicas: 1,
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1649,8 +1714,9 @@ func TestValidateCreate(t *testing.T) {
 					SuccessPolicy: &jobset.SuccessPolicy{},
 					ReplicatedJobs: []jobset.ReplicatedJob{
 						{
-							Name:     "job-1",
-							Replicas: 1,
+							Name:      "job-1",
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1665,7 +1731,8 @@ func TestValidateCreate(t *testing.T) {
 									Status: "Complete",
 								},
 							},
-							Replicas: 1,
+							GroupName: "default",
+							Replicas:  1,
 							Template: batchv1.JobTemplateSpec{
 								Spec: batchv1.JobSpec{
 									Template: validPodTemplateSpec,
@@ -1676,6 +1743,44 @@ func TestValidateCreate(t *testing.T) {
 				},
 			},
 			want: errors.Join(fmt.Errorf("replicatedJob: job-2 cannot depend on replicatedJob: invalid")),
+		},
+		{
+			name: "dependsOn should not fail if there are no replicated jobs",
+			js: &jobset.JobSet{
+				ObjectMeta: validObjectMeta,
+				Spec: jobset.JobSetSpec{
+					SuccessPolicy:  &jobset.SuccessPolicy{},
+					ReplicatedJobs: []jobset.ReplicatedJob{},
+				},
+			},
+		},
+		{
+			name: "dependsOn cannot be set for first replicated job",
+			js: &jobset.JobSet{
+				ObjectMeta: validObjectMeta,
+				Spec: jobset.JobSetSpec{
+					SuccessPolicy: &jobset.SuccessPolicy{},
+					ReplicatedJobs: []jobset.ReplicatedJob{
+						{
+							Name: "job-1",
+							DependsOn: []jobset.DependsOn{
+								{
+									Name:   "invalid",
+									Status: "Complete",
+								},
+							},
+							GroupName: "default",
+							Replicas:  1,
+							Template: batchv1.JobTemplateSpec{
+								Spec: batchv1.JobSpec{
+									Template: validPodTemplateSpec,
+								},
+							},
+						},
+					},
+				},
+			},
+			want: errors.Join(fmt.Errorf("DependsOn can't be set for the first ReplicatedJob")),
 		},
 	}
 

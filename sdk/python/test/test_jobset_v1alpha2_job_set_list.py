@@ -40,7 +40,45 @@ class TestJobsetV1alpha2JobSetList(unittest.TestCase):
                     jobset.models.jobset_v1alpha2_job_set.JobsetV1alpha2JobSet(
                         api_version = '', 
                         kind = '', 
-                        metadata = None, 
+                        metadata = jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/object_meta.io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta(
+                            annotations = {
+                                'key' : ''
+                                }, 
+                            creation_timestamp = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
+                            deletion_grace_period_seconds = 56, 
+                            deletion_timestamp = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
+                            finalizers = [
+                                ''
+                                ], 
+                            generate_name = '', 
+                            generation = 56, 
+                            labels = {
+                                'key' : ''
+                                }, 
+                            managed_fields = [
+                                jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/managed_fields_entry.io.k8s.apimachinery.pkg.apis.meta.v1.ManagedFieldsEntry(
+                                    api_version = '', 
+                                    fields_type = '', 
+                                    fields_v1 = jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/fields_v1.io.k8s.apimachinery.pkg.apis.meta.v1.FieldsV1(), 
+                                    manager = '', 
+                                    operation = '', 
+                                    subresource = '', 
+                                    time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), )
+                                ], 
+                            name = '', 
+                            namespace = '', 
+                            owner_references = [
+                                jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/owner_reference.io.k8s.apimachinery.pkg.apis.meta.v1.OwnerReference(
+                                    api_version = '', 
+                                    block_owner_deletion = True, 
+                                    controller = True, 
+                                    kind = '', 
+                                    name = '', 
+                                    uid = '', )
+                                ], 
+                            resource_version = '', 
+                            self_link = '', 
+                            uid = '', ), 
                         spec = jobset.models.jobset_v1alpha2_job_set_spec.JobsetV1alpha2JobSetSpec(
                             coordinator = jobset.models.jobset_v1alpha2_coordinator.JobsetV1alpha2Coordinator(
                                 job_index = 56, 
@@ -72,9 +110,10 @@ class TestJobsetV1alpha2JobSetList(unittest.TestCase):
                                             name = '', 
                                             status = '', )
                                         ], 
+                                    group_name = '', 
                                     name = '', 
                                     replicas = 56, 
-                                    template = V1JobTemplateSpec(), )
+                                    template = jobset.models.io/k8s/api/batch/v1/job_template_spec.io.k8s.api.batch.v1.JobTemplateSpec(), )
                                 ], 
                             startup_policy = jobset.models.jobset_v1alpha2_startup_policy.JobsetV1alpha2StartupPolicy(
                                 startup_policy_order = '', ), 
@@ -84,7 +123,13 @@ class TestJobsetV1alpha2JobSetList(unittest.TestCase):
                             ttl_seconds_after_finished = 56, ), 
                         status = jobset.models.jobset_v1alpha2_job_set_status.JobsetV1alpha2JobSetStatus(
                             conditions = [
-                                None
+                                jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/condition.io.k8s.apimachinery.pkg.apis.meta.v1.Condition(
+                                    last_transition_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
+                                    message = '', 
+                                    observed_generation = 56, 
+                                    reason = '', 
+                                    status = '', 
+                                    type = '', )
                                 ], 
                             replicated_jobs_status = [
                                 jobset.models.jobset_v1alpha2_replicated_job_status.JobsetV1alpha2ReplicatedJobStatus(
@@ -100,7 +145,11 @@ class TestJobsetV1alpha2JobSetList(unittest.TestCase):
                             terminal_state = '', ), )
                     ],
                 kind = '',
-                metadata = None
+                metadata = jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/list_meta.io.k8s.apimachinery.pkg.apis.meta.v1.ListMeta(
+                    continue = '', 
+                    remaining_item_count = 56, 
+                    resource_version = '', 
+                    self_link = '', )
             )
         else:
             return JobsetV1alpha2JobSetList(
@@ -108,7 +157,45 @@ class TestJobsetV1alpha2JobSetList(unittest.TestCase):
                     jobset.models.jobset_v1alpha2_job_set.JobsetV1alpha2JobSet(
                         api_version = '', 
                         kind = '', 
-                        metadata = None, 
+                        metadata = jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/object_meta.io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta(
+                            annotations = {
+                                'key' : ''
+                                }, 
+                            creation_timestamp = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
+                            deletion_grace_period_seconds = 56, 
+                            deletion_timestamp = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
+                            finalizers = [
+                                ''
+                                ], 
+                            generate_name = '', 
+                            generation = 56, 
+                            labels = {
+                                'key' : ''
+                                }, 
+                            managed_fields = [
+                                jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/managed_fields_entry.io.k8s.apimachinery.pkg.apis.meta.v1.ManagedFieldsEntry(
+                                    api_version = '', 
+                                    fields_type = '', 
+                                    fields_v1 = jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/fields_v1.io.k8s.apimachinery.pkg.apis.meta.v1.FieldsV1(), 
+                                    manager = '', 
+                                    operation = '', 
+                                    subresource = '', 
+                                    time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), )
+                                ], 
+                            name = '', 
+                            namespace = '', 
+                            owner_references = [
+                                jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/owner_reference.io.k8s.apimachinery.pkg.apis.meta.v1.OwnerReference(
+                                    api_version = '', 
+                                    block_owner_deletion = True, 
+                                    controller = True, 
+                                    kind = '', 
+                                    name = '', 
+                                    uid = '', )
+                                ], 
+                            resource_version = '', 
+                            self_link = '', 
+                            uid = '', ), 
                         spec = jobset.models.jobset_v1alpha2_job_set_spec.JobsetV1alpha2JobSetSpec(
                             coordinator = jobset.models.jobset_v1alpha2_coordinator.JobsetV1alpha2Coordinator(
                                 job_index = 56, 
@@ -140,9 +227,10 @@ class TestJobsetV1alpha2JobSetList(unittest.TestCase):
                                             name = '', 
                                             status = '', )
                                         ], 
+                                    group_name = '', 
                                     name = '', 
                                     replicas = 56, 
-                                    template = V1JobTemplateSpec(), )
+                                    template = jobset.models.io/k8s/api/batch/v1/job_template_spec.io.k8s.api.batch.v1.JobTemplateSpec(), )
                                 ], 
                             startup_policy = jobset.models.jobset_v1alpha2_startup_policy.JobsetV1alpha2StartupPolicy(
                                 startup_policy_order = '', ), 
@@ -152,7 +240,13 @@ class TestJobsetV1alpha2JobSetList(unittest.TestCase):
                             ttl_seconds_after_finished = 56, ), 
                         status = jobset.models.jobset_v1alpha2_job_set_status.JobsetV1alpha2JobSetStatus(
                             conditions = [
-                                None
+                                jobset.models.io/k8s/apimachinery/pkg/apis/meta/v1/condition.io.k8s.apimachinery.pkg.apis.meta.v1.Condition(
+                                    last_transition_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), 
+                                    message = '', 
+                                    observed_generation = 56, 
+                                    reason = '', 
+                                    status = '', 
+                                    type = '', )
                                 ], 
                             replicated_jobs_status = [
                                 jobset.models.jobset_v1alpha2_replicated_job_status.JobsetV1alpha2ReplicatedJobStatus(

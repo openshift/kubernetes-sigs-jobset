@@ -26,19 +26,17 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
-
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/utils/ptr"
-
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	"sigs.k8s.io/jobset/pkg/util/placement"
-
 	jobset "sigs.k8s.io/jobset/api/jobset/v1alpha2"
+	"sigs.k8s.io/jobset/pkg/util/placement"
 )
 
 // maximum lnegth of the value of the managedBy field
@@ -48,6 +46,10 @@ const (
 	// This is the error message returned by IsDNS1035Label when the given input
 	// is longer than 63 characters.
 	dns1035MaxLengthExceededErrorMsg = "must be no more than 63 characters"
+
+	// Error message returned by JobSet validation if the group name
+	// will be longer than 63 characters.
+	groupNameTooLongErrorMsg = ".spec.replicatedJob[].groupName is too long, must be less than 63 characters"
 
 	// Error message returned by JobSet validation if the generated child jobs
 	// will be longer than 63 characters.
@@ -117,7 +119,7 @@ func (j *jobSetWebhook) Default(ctx context.Context, obj runtime.Object) error {
 	for i := range js.Spec.ReplicatedJobs {
 		// Default job completion mode to indexed.
 		if js.Spec.ReplicatedJobs[i].Template.Spec.CompletionMode == nil {
-			js.Spec.ReplicatedJobs[i].Template.Spec.CompletionMode = completionModePtr(batchv1.IndexedCompletion)
+			js.Spec.ReplicatedJobs[i].Template.Spec.CompletionMode = ptr.To(batchv1.IndexedCompletion)
 		}
 		// Default pod restart policy to OnFailure.
 		if js.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.RestartPolicy == "" {
@@ -159,15 +161,17 @@ func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) 
 	}
 
 	var allErrs []error
-	// Validate that replicatedJobs listed in success policy are part of this JobSet.
-	validReplicatedJobs := replicatedJobNamesFromSpec(js)
+	// Validate that depends On can't be set for the first replicated job.
+	if len(js.Spec.ReplicatedJobs) > 0 && js.Spec.ReplicatedJobs[0].DependsOn != nil {
+		allErrs = append(allErrs, fmt.Errorf("DependsOn can't be set for the first ReplicatedJob"))
+	}
 
 	// Ensure that a provided subdomain is a valid DNS name
 	if js.Spec.Network != nil && js.Spec.Network.Subdomain != "" {
-
+		fieldPath := field.NewPath("spec", "network", "subdomain")
 		// This can return 1 or 2 errors, validating max length and format
 		for _, errMessage := range validation.IsDNS1123Subdomain(js.Spec.Network.Subdomain) {
-			allErrs = append(allErrs, errors.New(errMessage))
+			allErrs = append(allErrs, field.Invalid(fieldPath, js.Spec.Network.Subdomain, errMessage))
 		}
 
 		// Since subdomain name is also used as service name, it must adhere to RFC 1035 as well.
@@ -175,7 +179,8 @@ func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) 
 			if strings.Contains(errMessage, dns1035MaxLengthExceededErrorMsg) {
 				errMessage = subdomainTooLongErrMsg
 			}
-			allErrs = append(allErrs, errors.New(errMessage))
+
+			allErrs = append(allErrs, field.Invalid(fieldPath, js.Spec.Network.Subdomain, errMessage))
 		}
 	}
 
@@ -191,11 +196,13 @@ func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) 
 		}
 	}
 
-	// Map where key is ReplicatedJob name.
-	replicatedJobNames := map[string]bool{}
+	rJobNames := sets.New[string]()
 
 	// Validate each replicatedJob.
-	for _, rJob := range js.Spec.ReplicatedJobs {
+	for rJobIdx, rJob := range js.Spec.ReplicatedJobs {
+		fieldPath := field.NewPath("spec", "replicatedJobs").Index(rJobIdx)
+		rJobNames.Insert(rJob.Name)
+
 		var parallelism int32 = 1
 		if rJob.Template.Spec.Parallelism != nil {
 			parallelism = *rJob.Template.Spec.Parallelism
@@ -204,6 +211,13 @@ func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) 
 			allErrs = append(allErrs, fmt.Errorf("the product of replicas and parallelism must not exceed %d for replicatedJob '%s'", math.MaxInt32, rJob.Name))
 		}
 
+		// Check that the group name is DNS 1035 compliant.
+		for _, errMessage := range validation.IsDNS1035Label(rJob.GroupName) {
+			if strings.Contains(errMessage, dns1035MaxLengthExceededErrorMsg) {
+				errMessage = groupNameTooLongErrorMsg
+			}
+			allErrs = append(allErrs, field.Invalid(fieldPath.Child("groupName"), rJob.GroupName, errMessage))
+		}
 		// Check that the generated job names for this replicated job will be DNS 1035 compliant.
 		// Use the largest job index as it will have the longest name.
 		longestJobName := placement.GenJobName(js.Name, rJob.Name, int(rJob.Replicas-1))
@@ -211,7 +225,7 @@ func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) 
 			if strings.Contains(errMessage, dns1035MaxLengthExceededErrorMsg) {
 				errMessage = jobNameTooLongErrorMsg
 			}
-			allErrs = append(allErrs, errors.New(errMessage))
+			allErrs = append(allErrs, field.Invalid(fieldPath.Child("name"), longestJobName, errMessage))
 		}
 		// Check that the generated pod names for the replicated job is DNS 1035 compliant.
 		isIndexedJob := rJob.Template.Spec.CompletionMode != nil && *rJob.Template.Spec.CompletionMode == batchv1.IndexedCompletion
@@ -224,29 +238,25 @@ func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) 
 				if strings.Contains(errMessage, dns1035MaxLengthExceededErrorMsg) {
 					errMessage = podNameTooLongErrorMsg
 				}
-				allErrs = append(allErrs, errors.New(errMessage))
+				allErrs = append(allErrs, field.Invalid(fieldPath.Child("name"), longestJobName, errMessage))
 			}
 		}
-		replicatedJobNames[rJob.Name] = true
 		// Check that DependsOn references the previous ReplicatedJob.
-		if rJob.DependsOn != nil {
-			_, ok := replicatedJobNames[rJob.DependsOn[0].Name]
-			if !ok {
-				allErrs = append(allErrs, fmt.Errorf("replicatedJob: %s cannot depend on replicatedJob: %s", rJob.Name, rJob.DependsOn[0].Name))
-			}
+		if rJob.DependsOn != nil && !rJobNames.Has(rJob.DependsOn[0].Name) {
+			allErrs = append(allErrs, fmt.Errorf("replicatedJob: %s cannot depend on replicatedJob: %s", rJob.Name, rJob.DependsOn[0].Name))
 		}
 	}
 
 	// Validate the success policy's target replicated jobs are valid.
-	for _, rjobName := range js.Spec.SuccessPolicy.TargetReplicatedJobs {
-		if !slices.Contains(validReplicatedJobs, rjobName) {
-			allErrs = append(allErrs, fmt.Errorf("invalid replicatedJob name '%s' does not appear in .spec.ReplicatedJobs", rjobName))
+	for _, rJobName := range js.Spec.SuccessPolicy.TargetReplicatedJobs {
+		if !rJobNames.Has(rJobName) {
+			allErrs = append(allErrs, fmt.Errorf("invalid replicatedJob name '%s' does not appear in .spec.ReplicatedJobs", rJobName))
 		}
 	}
 
 	// Validate failure policy
 	if js.Spec.FailurePolicy != nil {
-		failurePolicyErrors := validateFailurePolicy(js.Spec.FailurePolicy, validReplicatedJobs)
+		failurePolicyErrors := validateFailurePolicy(js.Spec.FailurePolicy, rJobNames)
 		allErrs = append(allErrs, failurePolicyErrors...)
 	}
 
@@ -306,7 +316,7 @@ const (
 var ruleNameRegexp = regexp.MustCompile(ruleNameFmt)
 
 // validateFailurePolicy performs validation for jobset failure policies and returns all errors detected.
-func validateFailurePolicy(failurePolicy *jobset.FailurePolicy, validReplicatedJobs []string) []error {
+func validateFailurePolicy(failurePolicy *jobset.FailurePolicy, rJobNames sets.Set[string]) []error {
 	var allErrs []error
 	if failurePolicy == nil {
 		return allErrs
@@ -330,9 +340,9 @@ func validateFailurePolicy(failurePolicy *jobset.FailurePolicy, validReplicatedJ
 		}
 
 		// Validate the rules target replicated jobs are valid
-		for _, rjobName := range rule.TargetReplicatedJobs {
-			if !slices.Contains(validReplicatedJobs, rjobName) {
-				allErrs = append(allErrs, fmt.Errorf("invalid replicatedJob name '%s' in failure policy does not appear in .spec.ReplicatedJobs", rjobName))
+		for _, rJobName := range rule.TargetReplicatedJobs {
+			if !rJobNames.Has(rJobName) {
+				allErrs = append(allErrs, fmt.Errorf("invalid replicatedJob name '%s' in failure policy does not appear in .spec.ReplicatedJobs", rJobName))
 			}
 		}
 
@@ -392,18 +402,4 @@ func replicatedJobByName(js *jobset.JobSet, replicatedJob string) *jobset.Replic
 		}
 	}
 	return nil
-}
-
-// replicatedJobNamesFromSpec parses the JobSet spec and returns a list of
-// the replicatedJob names.
-func replicatedJobNamesFromSpec(js *jobset.JobSet) []string {
-	names := []string{}
-	for _, rjob := range js.Spec.ReplicatedJobs {
-		names = append(names, rjob.Name)
-	}
-	return names
-}
-
-func completionModePtr(mode batchv1.CompletionMode) *batchv1.CompletionMode {
-	return &mode
 }

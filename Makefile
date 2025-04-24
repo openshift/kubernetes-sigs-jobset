@@ -6,7 +6,7 @@ else
 endif
 
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-ENVTEST_K8S_VERSION = 1.30
+ENVTEST_K8S_VERSION = 1.32
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -27,10 +27,12 @@ PLATFORMS ?= linux/amd64,linux/arm64
 DOCKER_BUILDX_CMD ?= docker buildx
 IMAGE_BUILD_CMD ?= $(DOCKER_BUILDX_CMD) build
 IMAGE_BUILD_EXTRA_OPTS ?=
-IMAGE_REGISTRY ?= gcr.io/k8s-staging-jobset
+STAGING_IMAGE_REGISTRY := us-central1-docker.pkg.dev/k8s-staging-images
+IMAGE_REGISTRY ?= $(STAGING_IMAGE_REGISTRY)/jobset
 IMAGE_NAME := jobset
 IMAGE_REPO ?= $(IMAGE_REGISTRY)/$(IMAGE_NAME)
 IMAGE_TAG ?= $(IMAGE_REPO):$(GIT_TAG)
+HELM_CHART_REPO := $(STAGING_IMAGE_REGISTRY)/jobset/charts
 
 ifdef EXTRA_TAG
 IMAGE_EXTRA_TAG ?= $(IMAGE_REPO):$(EXTRA_TAG)
@@ -43,6 +45,7 @@ endif
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 BASE_IMAGE ?= gcr.io/distroless/static:nonroot
 BUILDER_IMAGE ?= golang:$(GO_VERSION)
+CGO_ENABLED ?= 0
 
 ifdef EXTRA_TAG
 IMAGE_EXTRA_TAG ?= $(IMAGE_REPO):$(EXTRA_TAG)
@@ -61,14 +64,19 @@ SHELL = /usr/bin/env bash -o pipefail
 INTEGRATION_TARGET ?= ./test/integration/...
 
 PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
+JOBSET_CHART_DIR := charts/jobset
 
 E2E_TARGET ?= ./test/e2e/...
-E2E_KIND_VERSION ?= kindest/node:v1.30.0
+E2E_KIND_VERSION ?= kindest/node:v1.32.3
 USE_EXISTING_CLUSTER ?= false
 
 # For local testing, we should allow user to use different kind cluster name
 # Default will delete default kind cluster
 KIND_CLUSTER_NAME ?= kind
+
+version_pkg = sigs.k8s.io/jobset/pkg/version
+LD_FLAGS += -X '$(version_pkg).GitVersion=$(GIT_TAG)'
+LD_FLAGS += -X '$(version_pkg).GitCommit=$(shell git rev-parse HEAD)'
 
 .PHONY: all
 all: build
@@ -104,7 +112,7 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 		paths="./pkg/..."
 
 .PHONY: generate
-generate: manifests controller-gen code-generator openapi-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations and client-go libraries.
+generate: manifests controller-gen code-generator openapi-gen helm helm-docs ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations and client-go libraries.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./api/..."
 	./hack/update-codegen.sh $(GO_CMD) $(PROJECT_DIR)/bin
 	./hack/python-sdk/gen-sdk.sh
@@ -129,6 +137,11 @@ toc-update:
 toc-verify:
 	./hack/verify-toc.sh
 
+.PHONY: helm-verify
+helm-verify: helm-unittest helm-lint
+	${HELM} template charts/jobset
+
+
 .PHONY: vet
 vet: ## Run go vet against code.
 	$(GO_CMD) vet ./...
@@ -147,15 +160,15 @@ test-python-sdk:
 	./hack/python-sdk/test-sdk.sh
 
 .PHONY: verify
-verify: vet fmt-verify ci-lint manifests generate toc-verify generate-apiref
-	git --no-pager diff --exit-code config api client-go sdk
-	
+verify: vet fmt-verify ci-lint manifests generate helm-verify toc-verify generate-apiref
+	git --no-pager diff --exit-code config api client-go sdk charts
+
 
 ##@ Build
 
 .PHONY: build
-build: manifests fmt vet ## Build manager binary.
-	$(GO_CMD) build -o bin/manager main.go
+build: manifests ## Build manager binary.
+	$(GO_BUILD_ENV) $(GO_CMD) build -ldflags="$(LD_FLAGS)" -o bin/manager main.go
 
 .PHONY: run
 run: manifests fmt vet ## Run a controller from your host.
@@ -208,21 +221,81 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | kubectl delete --ignore-not-found=$(ignore-not-found) -f -
 
-##@ Build Dependencies
+##@ Helm
+.PHONY: helm-unittest
+helm-unittest: helm-unittest-plugin ## Run Helm chart unittests.
+	$(HELM) unittest $(JOBSET_CHART_DIR) --strict --file "tests/**/*_test.yaml"
+
+.PHONY: helm-lint
+helm-lint: ## Run Helm chart lint test.
+	${HELM} lint charts/jobset
+
+.PHONY: helm-docs
+helm-docs: helm-docs-plugin ## Generates markdown documentation for helm charts from requirements and values files.
+	$(HELM_DOCS) --sort-values-order=file
+
+.PHONY: helm-chart-push
+helm-chart-push: yq helm
+	EXTRA_TAG="$(EXTRA_TAG)" GIT_TAG="$(GIT_TAG)" IMAGE_REGISTRY="$(IMAGE_REGISTRY)" HELM_CHART_REPO="$(HELM_CHART_REPO)" IMAGE_REPO="$(IMAGE_REPO)" HELM="$(HELM)" YQ="$(YQ)" ./hack/push-chart.sh
+
+
+##@ Release
+.PHONY: artifacts
+artifacts: kustomize helm yq
+	cd config/components/manager && $(KUSTOMIZE) edit set image controller=${IMAGE_TAG}
+	if [ -d artifacts ]; then rm -rf artifacts; fi
+	mkdir -p artifacts
+	$(KUSTOMIZE) build config/default -o artifacts/manifests.yaml
+	$(KUSTOMIZE) build config/prometheus -o artifacts/prometheus.yaml
+	@$(call clean-manifests)
+	# Update the image tag and policy
+	$(YQ)  e  '.image.repository = "$(IMAGE_REPO)" | .image.tag = "$(GIT_TAG)" | .image.pullPolicy = "IfNotPresent"' -i charts/jobset/values.yaml
+	# create the package. TODO: consider signing it
+	$(HELM) package --version $(GIT_TAG) --app-version $(GIT_TAG) charts/jobset -d artifacts/
+	mv artifacts/jobset-$(GIT_TAG).tgz artifacts/jobset-chart-$(GIT_TAG).tgz
+	# Revert the image changes
+	$(YQ)  e  '.image.repository = "$(IMAGE_REGISTRY)/$(IMAGE_NAME)" | .image.tag="main" | .image.pullPolicy = "Always"' -i charts/jobset/values.yaml
+
+GOLANGCI_LINT = $(PROJECT_DIR)/bin/golangci-lint
+.PHONY: golangci-lint
+golangci-lint: ## Download golangci-lint locally if necessary.
+	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.5
+
+GOTESTSUM = $(shell pwd)/bin/gotestsum
+.PHONY: gotestsum
+gotestsum: ## Download gotestsum locally if necessary.
+	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install gotest.tools/gotestsum@v1.8.2
+
+
+.PHONY: generate-apiref
+generate-apiref: genref
+	cd $(PROJECT_DIR)/hack/genref/ && $(GENREF) -o $(PROJECT_DIR)/site/content/en/docs/reference
+
+GENREF = $(PROJECT_DIR)/bin/genref
+.PHONY: genref
+genref: ## Download genref locally if necessary.
+	@GOBIN=$(PROJECT_DIR)/bin $(GO_CMD) install github.com/kubernetes-sigs/reference-docs/genref@v0.28.0
+
+##@ Dependencies
 
 ## Location to install dependencies to
 LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
+## Tool Versions
+KUSTOMIZE_VERSION ?= v3.8.7
+CONTROLLER_TOOLS_VERSION ?= v0.17.2
+HELM_VERSION ?= v3.17.1
+HELM_UNITTEST_VERSION ?= 0.7.2
+HELM_DOCS_VERSION ?= v1.14.2
+
 ## Tool Binaries
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
-
-## Tool Versions
-KUSTOMIZE_VERSION ?= v3.8.7
-CONTROLLER_TOOLS_VERSION ?= v0.16.2
+HELM ?= $(ARTIFACTS)/helm
+HELM_DOCS ?= $(ARTIFACTS)/helm-docs
 
 KUSTOMIZE_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"
 .PHONY: kustomize
@@ -257,7 +330,7 @@ code-generator:
 openapi-gen:
 	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install k8s.io/kube-openapi/cmd/openapi-gen@latest
 	$(PROJECT_DIR)/bin/openapi-gen --go-header-file hack/boilerplate.go.txt --output-dir api/jobset/v1alpha2 --output-pkg api/jobset/v1alpha2 --output-file openapi_generated.go --alsologtostderr ./api/jobset/v1alpha2
-	
+
 .PHONY: envtest
 envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
 $(ENVTEST): $(LOCALBIN)
@@ -291,32 +364,25 @@ test-e2e-kind: manifests kustomize fmt vet envtest ginkgo kind-image-build
 prometheus:
 	kubectl apply --server-side -k config/prometheus
 
-##@ Release
-.PHONY: artifacts
-artifacts: kustomize
-	cd config/components/manager && $(KUSTOMIZE) edit set image controller=${IMAGE_TAG}
-	if [ -d artifacts ]; then rm -rf artifacts; fi
-	mkdir -p artifacts
-	$(KUSTOMIZE) build config/default -o artifacts/manifests.yaml
-	$(KUSTOMIZE) build config/prometheus -o artifacts/prometheus.yaml
-	@$(call clean-manifests)
+HELM = $(PROJECT_DIR)/bin/helm
+.PHONY: helm
+helm: ## Download helm locally if necessary.
+	GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install helm.sh/helm/v3/cmd/helm@$(HELM_VERSION)
 
-GOLANGCI_LINT = $(PROJECT_DIR)/bin/golangci-lint
-.PHONY: golangci-lint
-golangci-lint: ## Download golangci-lint locally if necessary.
-	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.60.3
+.PHONY: helm-unittest-plugin
+helm-unittest-plugin: helm ## Download helm unittest plugin locally if necessary.
+	if [ -z "$(shell $(HELM) plugin list | grep unittest)" ]; then \
+		echo "Installing helm unittest plugin"; \
+		$(HELM) plugin install https://github.com/helm-unittest/helm-unittest.git --version $(HELM_UNITTEST_VERSION); \
+	fi
 
-GOTESTSUM = $(shell pwd)/bin/gotestsum
-.PHONY: gotestsum
-gotestsum: ## Download gotestsum locally if necessary.
-	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install gotest.tools/gotestsum@v1.8.2
+HELM_DOCS= $(PROJECT_DIR)/bin/helm-docs
+.PHONY: helm-docs-plugin
+helm-docs-plugin:
+	GOBIN=$(LOCALBIN) $(GO_CMD) install github.com/norwoodj/helm-docs/cmd/helm-docs@$(HELM_DOCS_VERSION)
 
+YQ = $(PROJECT_DIR)/bin/yq
+.PHONY: yq
+yq: ## Download yq locally if necessary.
+	GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install github.com/mikefarah/yq/v4@v4.45.1
 
-.PHONY: generate-apiref
-generate-apiref: genref
-	cd $(PROJECT_DIR)/hack/genref/ && $(GENREF) -o $(PROJECT_DIR)/site/content/en/docs/reference
-
-GENREF = $(PROJECT_DIR)/bin/genref
-.PHONY: genref
-genref: ## Download genref locally if necessary.
-	@GOBIN=$(PROJECT_DIR)/bin $(GO_CMD) install github.com/kubernetes-sigs/reference-docs/genref@v0.28.0

@@ -90,6 +90,7 @@ pytorch-workers-0-3-mn8c8   1/1     Running   0          13m
 
 JobSet labels will have `jobset.x-k8s.io/` prefix. JobSet sets the following labels on both the jobs and pods:
 - `jobset.sigs.k8s.io/jobset-name`: `.metadata.name`
+- `jobset.sigs.k8s.io/jobset-uid`: `.metadata.uid`
 - `jobset.sigs.k8s.io/replicatedjob-name`: `.spec.replicatedJobs[*].name`
 - `jobset.sigs.k8s.io/replicatedjob-replicas`: `.spec.replicatedJobs[*].replicas`
 - `jobset.sigs.k8s.io/job-index`: ordinal index of a job within a `spec.replicatedJobs[*]`
@@ -109,13 +110,12 @@ The Job name will have the following format: `<jobSetName>-<replicatedJobName>-<
 
 ### DNS hostnames for Pods
 
-By default, JobSet configures DNS for Pods by creating a headless service for each `spec.replicatedJobs`. 
-The headless service name, which determines the subdomain, is `.metadata.name-.spec.replicatedJobs[*].name`
+By default, JobSet configures DNS for Pods by creating a headless service with name `spec.network.subdomain` which defaults to `.metadata.name` if not set.   
 
-To list all the headless services that belong to a JobSet, you can use a command like this:
+To list the headless service that belong to a JobSet, you can use a command like this:
 
 ```shell
-kubectl get services --selector=jobset.sigs.k8s.io/jobset-name=pytorch
+kubectl get svc -o jsonpath='{.items[?(@.spec.selector.jobset\.sigs\.k8s\.io/jobset-name == "pytorch")].metadata.name}' | xargs kubectl get services
 ```
 
 The output is similar to 
@@ -123,6 +123,27 @@ The output is similar to
 ```
 NAME              TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
 pytorch-workers   ClusterIP   None         <none>        <none>    25m
+```
+
+The hostname for pod will have the following format: `<jobSetName>-<spec.replicatedJob[*].name>-<spec.replicatedJob[*].replicas[*]>-<pod-index>`. 
+
+The FQDN for pod will have the following format: `<jobSetName>-<spec.replicatedJob[*].name>-<spec.replicatedJob[*].replicas[*]>-<pod-index>.<subdomain>`. 
+
+To list all the hostname for the pods that belong to a JobSet, you can use a command like this:
+
+```shell
+kubectl get pods -o custom-columns=Name:.metadata.name,HOSTNAME:.spec.hostname,Subdomain:.spec.subdomain --selector=jobset.sigs.k8s.io/jobset-name=pytorch
+
+```
+
+The output is similar to 
+
+```
+Name                         HOSTNAME                 Subdomain
+pytorch-workers-0-0-tcngx   pytorch-workers-0-0.      pytorch
+pytorch-workers-0-1-sbhxs   pytorch-workers-0-1       pytorch
+pytorch-workers-0-2-5m6d6   pytorch-workers-0-2       pytorch
+pytorch-workers-0-3-mn8c8.  pytorch-workers-0-3       pytorch
 ```
 
 ### Exclusive Job to topology placement

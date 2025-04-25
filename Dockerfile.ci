@@ -1,8 +1,5 @@
-ARG BUILDER_IMAGE=registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.23-openshift-4.19
-ARG BASE_IMAGE=registry.ci.openshift.org/ocp/builder:rhel-9-base-openshift-4.19
-
 # Build the manager binary
-FROM ${BUILDER_IMAGE} AS builder
+FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.23-openshift-4.19 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -16,7 +13,7 @@ ENV GOFLAGS="-tags=strictfipsruntime -mod=vendor -a"
 
 RUN make -f Makefile-ocp.mk build-ocp GO_BUILD_ENV='CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH}'
 
-FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
+FROM --platform=$TARGETPLATFORM registry.ci.openshift.org/ocp/4.19:base-rhel9
 WORKDIR /
 COPY --from=builder /workspace/bin/manager .
 RUN mkdir /licenses

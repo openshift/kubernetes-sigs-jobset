@@ -228,7 +228,7 @@ undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/confi
 ##@ Helm
 .PHONY: helm-unittest
 helm-unittest: helm-unittest-plugin ## Run Helm chart unittests.
-	HOME="$(LOCALBIN)/helm-home" $(HELM) unittest $(JOBSET_CHART_DIR) --strict --file "tests/**/*_test.yaml"
+	$(HELM) unittest $(JOBSET_CHART_DIR) --strict --file "tests/**/*_test.yaml"
 
 .PHONY: helm-lint
 helm-lint: ## Run Helm chart lint test.
@@ -375,9 +375,9 @@ helm: ## Download helm locally if necessary.
 
 .PHONY: helm-unittest-plugin
 helm-unittest-plugin: helm ## Download helm unittest plugin locally if necessary.
-	if [ -z "$(shell HOME="$(LOCALBIN)/helm-home" $(HELM) plugin list | grep unittest)" ]; then \
+	if [ -z "$(shell $(HELM) plugin list | grep unittest)" ]; then \
 		echo "Installing helm unittest plugin"; \
-		HOME="$(LOCALBIN)/helm-home" $(HELM) plugin install https://github.com/helm-unittest/helm-unittest.git --version $(HELM_UNITTEST_VERSION); \
+		$(HELM) plugin install https://github.com/helm-unittest/helm-unittest.git --version $(HELM_UNITTEST_VERSION); \
 	fi
 
 HELM_DOCS= $(PROJECT_DIR)/bin/helm-docs

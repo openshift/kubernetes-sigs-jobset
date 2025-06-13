@@ -115,7 +115,9 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 generate: manifests controller-gen code-generator openapi-gen helm helm-docs ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations and client-go libraries.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./api/..."
 	./hack/update-codegen.sh $(GO_CMD) $(PROJECT_DIR)/bin
-	./hack/python-sdk/gen-sdk.sh
+	# TODO: fix python-sdk generation
+	# Nevertheless, any changes to the python-sdk should first be pushed to the upstream repo.
+	# ./hack/python-sdk/gen-sdk.sh
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -123,7 +125,7 @@ fmt: ## Run go fmt against code.
 
 .PHONY: fmt-verify
 fmt-verify:
-	@out=`$(GO_FMT) -w -l -d $$(find . -name '*.go')`; \
+	@out=`$(GO_FMT) -w -l -d $$(find . -name '*.go' -not -path "./vendor/*")`; \
 	if [ -n "$$out" ]; then \
 	    echo "$$out"; \
 	    exit 1; \
@@ -150,8 +152,10 @@ vet: ## Run go vet against code.
 ci-lint: golangci-lint
 	$(GOLANGCI_LINT) run --timeout 15m0s
 
+# TODO: add test-python-sdk target
+# Nevertheless, any changes to the python-sdk should first be pushed to the upstream repo.
 .PHONY: test
-test: manifests fmt vet envtest gotestsum test-python-sdk
+test: manifests fmt vet envtest gotestsum
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" $(GOTESTSUM) --junitfile $(ARTIFACTS)/junit.xml -- ./pkg/... ./api/... -coverprofile  $(ARTIFACTS)/cover.out
 
 .PHONY: test-python-sdk
@@ -224,7 +228,7 @@ undeploy: ## Undeploy controller from the K8s cluster specified in ~/.kube/confi
 ##@ Helm
 .PHONY: helm-unittest
 helm-unittest: helm-unittest-plugin ## Run Helm chart unittests.
-	$(HELM) unittest $(JOBSET_CHART_DIR) --strict --file "tests/**/*_test.yaml"
+	HOME="$(LOCALBIN)/helm-home" $(HELM) unittest $(JOBSET_CHART_DIR) --strict --file "tests/**/*_test.yaml"
 
 .PHONY: helm-lint
 helm-lint: ## Run Helm chart lint test.
@@ -259,7 +263,7 @@ artifacts: kustomize helm yq
 GOLANGCI_LINT = $(PROJECT_DIR)/bin/golangci-lint
 .PHONY: golangci-lint
 golangci-lint: ## Download golangci-lint locally if necessary.
-	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.5
+	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.5
 
 GOTESTSUM = $(shell pwd)/bin/gotestsum
 .PHONY: gotestsum
@@ -344,7 +348,7 @@ ginkgo: ## Download ginkgo locally if necessary.
 KIND = $(shell pwd)/bin/kind
 .PHONY: kind
 kind:
-	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install sigs.k8s.io/kind@v0.23.0
+	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install sigs.k8s.io/kind@v0.29.0
 
 .PHONY: kind-image-build
 kind-image-build: PLATFORMS=linux/amd64
@@ -353,7 +357,7 @@ kind-image-build: kind image-build
 
 .PHONY: test-integration
 test-integration: manifests fmt vet envtest ginkgo ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" \
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
 	$(GINKGO) --junit-report=junit.xml --output-dir=$(ARTIFACTS) $(GINKGO_ARGS) -v $(INTEGRATION_TARGET)
 
 .PHONY: test-e2e-kind
@@ -371,9 +375,9 @@ helm: ## Download helm locally if necessary.
 
 .PHONY: helm-unittest-plugin
 helm-unittest-plugin: helm ## Download helm unittest plugin locally if necessary.
-	if [ -z "$(shell $(HELM) plugin list | grep unittest)" ]; then \
+	if [ -z "$(shell HOME="$(LOCALBIN)/helm-home" $(HELM) plugin list | grep unittest)" ]; then \
 		echo "Installing helm unittest plugin"; \
-		$(HELM) plugin install https://github.com/helm-unittest/helm-unittest.git --version $(HELM_UNITTEST_VERSION); \
+		HOME="$(LOCALBIN)/helm-home" $(HELM) plugin install https://github.com/helm-unittest/helm-unittest.git --version $(HELM_UNITTEST_VERSION); \
 	fi
 
 HELM_DOCS= $(PROJECT_DIR)/bin/helm-docs

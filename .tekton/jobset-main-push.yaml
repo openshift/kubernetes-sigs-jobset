@@ -7,8 +7,23 @@ metadata:
     build.appstudio.redhat.com/target_branch: '{{target_branch}}'
     pipelinesascode.tekton.dev/cancel-in-progress: "false"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
-    pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch
-      == "main"
+    pipelinesascode.tekton.dev/on-cel-expression: |
+      event == "pull_request" 
+      && target_branch == "main" 
+      && (
+      ".tekton/jobset-main-push.yaml".pathChanged() 
+      || "api/***".pathChanged()
+      || "client-go/***".pathChanged()
+      || "config/***".pathChanged()
+      || "main.go".pathChanged()
+      || "pkg/***".pathChanged()
+      || "vendor/***".pathChanged()
+      || "Dockerfile.ocp".pathChanged()
+      || "go.mod".pathChanged()
+      || "go.sum".pathChanged()
+      || "Makefile".pathChanged()
+      || "Makefile-ocp.mk".pathChanged()
+      )
   creationTimestamp: null
   labels:
     appstudio.openshift.io/application: jobset-main
@@ -27,10 +42,17 @@ spec:
   - name: build-platforms
     value:
     - linux/x86_64
+    - linux/arm64
+    - linux/ppc64le
+    - linux/s390x
   - name: dockerfile
     value: Dockerfile.ocp
   - name: path-context
     value: .
+  - name: hermetic
+    value: "true"
+  - name: build-source-image
+    value: "true"
   pipelineSpec:
     description: |
       This pipeline is ideal for building multi-arch container images from a Containerfile while maintaining trust after pipeline customization.
@@ -461,7 +483,7 @@ spec:
         - name: name
           value: sast-coverity-check-oci-ta
         - name: bundle
-          value: quay.io/konflux-ci/tekton-catalog/task-sast-coverity-check-oci-ta:0.3@sha256:34ac8e9ddfaafedaa61a7c3c95d86e674556bfe3da488d94c3bf28fff9875b38
+          value: quay.io/konflux-ci/tekton-catalog/task-sast-coverity-check-oci-ta:0.3@sha256:f81ade665c725616b918356c8c2fb2d4ed972e822a1a3181933cd0ada728a231
         - name: kind
           value: task
         resolver: bundles

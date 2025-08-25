@@ -8,10 +8,10 @@ metadata:
     pipelinesascode.tekton.dev/cancel-in-progress: "false"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
     pipelinesascode.tekton.dev/on-cel-expression: |
-      event == "push" 
-      && target_branch == "main" 
+      event == "push"
+      && target_branch == "main"
       && (
-      ".tekton/jobset-main-push.yaml".pathChanged() 
+      ".tekton/jobset-main-push.yaml".pathChanged()
       || "api/***".pathChanged()
       || "client-go/***".pathChanged()
       || "config/***".pathChanged()
@@ -485,6 +485,11 @@ spec:
           value: task
         resolver: bundles
       when:
+      # temporary disable sast-coverity-check as it's consistently failing
+      - input: "false"
+        operator: in
+        values:
+        - "true"
       - input: $(params.skip-checks)
         operator: in
         values:

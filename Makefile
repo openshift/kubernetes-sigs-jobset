@@ -1,10 +1,3 @@
-# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
-ifeq (,$(shell go env GOBIN))
-        GOBIN=$(shell go env GOPATH)/bin
-else 
-        GOBIN=$(shell go env GOBIN)
-endif
-
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.32
 
@@ -23,7 +16,7 @@ GO_VERSION := $(shell awk '/^go /{print $$2}' go.mod|head -n1)
 
 GIT_TAG ?= $(shell git describe --tags --dirty --always)
 # Image URL to use all building/pushing image targets
-PLATFORMS ?= linux/amd64,linux/arm64
+PLATFORMS ?= linux/amd64,linux/arm64,linux/s390x
 DOCKER_BUILDX_CMD ?= docker buildx
 IMAGE_BUILD_CMD ?= $(DOCKER_BUILDX_CMD) build
 IMAGE_BUILD_EXTRA_OPTS ?=
@@ -33,13 +26,6 @@ IMAGE_NAME := jobset
 IMAGE_REPO ?= $(IMAGE_REGISTRY)/$(IMAGE_NAME)
 IMAGE_TAG ?= $(IMAGE_REPO):$(GIT_TAG)
 HELM_CHART_REPO := $(STAGING_IMAGE_REGISTRY)/jobset/charts
-
-ifdef EXTRA_TAG
-IMAGE_EXTRA_TAG ?= $(IMAGE_REPO):$(EXTRA_TAG)
-endif
-ifdef IMAGE_EXTRA_TAG
-IMAGE_BUILD_EXTRA_OPTS += -t $(IMAGE_EXTRA_TAG)
-endif
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
@@ -169,13 +155,16 @@ verify: vet fmt-verify ci-lint manifests generate helm-verify toc-verify generat
 
 
 ##@ Build
+.PHONY: install-go-deps
+install-go-deps:
+	$(GO_BUILD_ENV) $(GO_CMD) mod download
 
 .PHONY: build
-build: manifests ## Build manager binary.
+build: install-go-deps manifests ## Build manager binary.
 	$(GO_BUILD_ENV) $(GO_CMD) build -ldflags="$(LD_FLAGS)" -o bin/manager main.go
 
 .PHONY: run
-run: manifests fmt vet ## Run a controller from your host.
+run: install-go-deps manifests fmt vet ## Run a controller from your host.
 	$(GO_CMD) run ./main.go
 
 # Build the container image
@@ -390,3 +379,21 @@ YQ = $(PROJECT_DIR)/bin/yq
 yq: ## Download yq locally if necessary.
 	GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install github.com/mikefarah/yq/v4@v4.45.1
 
+## Docs website development
+.PHONY: site-install-npm-dependencies
+site-install-npm-dependencies:
+	cd $(PROJECT_DIR)/site && npm install
+
+HUGO_VERSION ?= 0.148.1
+HUGO_CMD = $(PROJECT_DIR)/bin/hugo
+.PHONY: site-install-hugo
+site-install-hugo:
+	GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on CGO_ENABLED=1 $(GO_CMD) install -tags extended github.com/gohugoio/hugo@v$(HUGO_VERSION)
+
+.PHONY: site-serve
+site-serve: site-install-hugo site-install-npm-dependencies
+	cd $(PROJECT_DIR)/site && $(HUGO_CMD) serve -D
+
+.PHONY: site-build
+site-build: site-install-hugo site-install-npm-dependencies
+	cd $(PROJECT_DIR)/site && $(HUGO_CMD) --gc --minify

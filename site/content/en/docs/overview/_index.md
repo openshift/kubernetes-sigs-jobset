@@ -9,7 +9,7 @@ description: >
   An overview of JobSet
 ---
 
-JobSet is a Kubernetes-native API for managing a group of [k8s Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) as a unit. It aims to offer a unified API for deploying HPC (e.g., MPI) and AI/ML training workloads (PyTorch, Jax, Tensorflow etc.) on Kubernetes.
+JobSet is a Kubernetes-native API for managing a group of [k8s Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) as a unit. It aims to offer a unified API for deploying HPC (e.g., MPI) and AI/ML training workloads (PyTorch, Jax, TensorFlow etc.) on Kubernetes.
 
 Take a look at the [concepts](../concepts/) page for a brief description of how to use JobSet.
 
@@ -46,10 +46,6 @@ efficiently and improve ML training goodput.
   - ✔️ Unit Test [testgrid](https://testgrid.k8s.io/sig-apps#pull-jobset-test-unit-main).
   - ✔️ Integration Test [testgrid](https://testgrid.k8s.io/sig-apps#pull-jobset-test-integration-main)
   - ✔️ E2E Tests for Kubernetes
-    [1.28](https://testgrid.k8s.io/sig-apps#pull-jobset-test-e2e-main-1-28),
-    [1.29](https://testgrid.k8s.io/sig-apps#pull-jobset-test-e2e-main-1-29),
-    [1.30](https://testgrid.k8s.io/sig-apps#pull-jobset-test-e2e-main-1-30),
-    [1.31](https://testgrid.k8s.io/sig-apps#pull-jobset-test-e2e-main-1-31)
     on Kind.
 - ✔️ Monitoring via [metrics](https://jobset.sigs.k8s.io/docs/reference/metrics).
 - ✔️ Security: RBAC based accessibility.
@@ -71,18 +67,7 @@ Read the [installation guide](https://jobset.sigs.k8s.io/docs/installation/) to 
 
 ## Roadmap
 
-Below is the JobSet roadmap for 2024, in expected order of release:
-
-- [X] Support for MultiKueue (https://github.com/kubernetes-sigs/jobset/issues/440)
-- [X] JobSet TTL to clean up completed workloads (https://github.com/kubernetes-sigs/jobset/issues/279)
-- [X] Configurable Failure Policy (https://github.com/kubernetes-sigs/jobset/issues/262)
-- [ ] Graduate API to v1 (https://github.com/kubernetes-sigs/jobset/issues/380)
-- [ ] In-place restarts (https://github.com/kubernetes-sigs/jobset/issues/467)
-- [ ] Placement Policy API (https://github.com/kubernetes-sigs/jobset/issues/75)
-- [ ] Support for JobSet extensions (https://github.com/kubernetes-sigs/jobset/issues/146)
-  - [ ] PyTorch Extension
-  - [ ] Jax Extension
-  - [ ] MPI Extension
+See our github project for our [roadmap](https://github.com/orgs/kubernetes-sigs/projects/99/views/2)
 
 ## Troubleshooting Common Issues
 

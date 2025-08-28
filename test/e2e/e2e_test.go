@@ -18,19 +18,34 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	apiruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/cli-runtime/pkg/printers"
+	batchv1ac "k8s.io/client-go/applyconfigurations/batch/v1"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	jobset "sigs.k8s.io/jobset/api/jobset/v1alpha2"
+	jobsetv1alpha2ac "sigs.k8s.io/jobset/client-go/applyconfiguration/jobset/v1alpha2"
 	"sigs.k8s.io/jobset/pkg/util/testing"
 	"sigs.k8s.io/jobset/test/util"
 )
+
+func shouldDumpNamespace() bool {
+	return os.Getenv("JOBSET_E2E_TESTS_DUMP_NAMESPACE") == "true"
+}
 
 var _ = ginkgo.Describe("JobSet", func() {
 
@@ -57,6 +72,34 @@ var _ = ginkgo.Describe("JobSet", func() {
 	})
 
 	ginkgo.AfterEach(func() {
+		// Dump the namespace content, optionally.
+		// This is only visible on failure since ginkgo.GinkgoWriter is being used.
+		if shouldDumpNamespace() {
+			var printer printers.YAMLPrinter
+
+			fmt.Fprintf(ginkgo.GinkgoWriter, "\nDumping relevant resources in namespace %s:\n\n", ns.Name)
+
+			// JobSets
+			var jobsets jobset.JobSetList
+			gomega.Expect(k8sClient.List(ctx, &jobsets)).To(gomega.Succeed())
+			for _, js := range jobsets.Items {
+				gomega.Expect(printer.PrintObj(&js, ginkgo.GinkgoWriter)).To(gomega.Succeed())
+			}
+
+			// Jobs
+			var jobs batchv1.JobList
+			gomega.Expect(k8sClient.List(ctx, &jobs)).To(gomega.Succeed())
+			for _, job := range jobs.Items {
+				// GVK is not set properly for the list items.
+				job.SetGroupVersionKind(schema.GroupVersionKind{
+					Group:   batchv1.SchemeGroupVersion.Group,
+					Version: batchv1.SchemeGroupVersion.Version,
+					Kind:    "Job",
+				})
+				gomega.Expect(printer.PrintObj(&job, ginkgo.GinkgoWriter)).To(gomega.Succeed())
+			}
+		}
+
 		// Delete test namespace after each test.
 		gomega.Expect(k8sClient.Delete(ctx, ns)).To(gomega.Succeed())
 	})
@@ -129,7 +172,29 @@ var _ = ginkgo.Describe("JobSet", func() {
 
 			// Check jobset is cleaned up after ttl seconds.
 			ginkgo.By("checking jobset is cleaned up after ttl seconds")
+		})
+	})
+
+	ginkgo.When("deleted using foreground propagation policy", func() {
+		ginkgo.It("all child jobs should be deleted", func() {
+			ctx := context.Background()
+
+			// Create a JobSet.
+			js := sleepTestJobSet(ns, 60).Obj()
+			ginkgo.By("checking that jobset creation succeeds")
+			gomega.Expect(k8sClient.Create(ctx, js)).Should(gomega.Succeed())
+
+			// Delete the JobSet using the foreground propagation policy.
+			ginkgo.By("deleting the jobset using foreground propagation policy")
+			gomega.Expect(k8sClient.Delete(ctx, js, client.PropagationPolicy(metav1.DeletePropagationForeground))).To(gomega.Succeed())
+
+			// Ensure the jobset is deleted.
+			ginkgo.By("checking that jobset deletion succeeds")
 			util.JobSetDeleted(ctx, k8sClient, js, timeout)
+
+			// Ensure the child jobs are deleted.
+			ginkgo.By("checking that all child jobs are deleted")
+			gomega.Expect(util.NumJobs(ctx, k8sClient, js)).To(gomega.Equal(0))
 		})
 	})
 
@@ -283,9 +348,9 @@ var _ = ginkgo.Describe("JobSet", func() {
 			trainerJob := "trainer-node"
 
 			// Every ReplicatedJob runs 1 container to sleep for 10 seconds.
-			rJobModelInitializer := dependsOnTestReplicatedJob(ns, modelInitializerJob, numReplicas, nil, nil)
-			rJobDatasetInitializer := dependsOnTestReplicatedJob(ns, datasetInitializerJob, numReplicas, nil, nil)
-			rJobTrainer := dependsOnTestReplicatedJob(ns, trainerJob, numReplicas, nil,
+			rJobModelInitializer := dependsOnTestReplicatedJob(ns, modelInitializerJob, numReplicas, nil, 10, nil)
+			rJobDatasetInitializer := dependsOnTestReplicatedJob(ns, datasetInitializerJob, numReplicas, nil, 10, nil)
+			rJobTrainer := dependsOnTestReplicatedJob(ns, trainerJob, numReplicas, nil, 0,
 				[]jobset.DependsOn{
 					{
 						Name:   modelInitializerJob,
@@ -304,25 +369,13 @@ var _ = ginkgo.Describe("JobSet", func() {
 				gomega.Expect(k8sClient.Create(ctx, jobSet)).Should(gomega.Succeed())
 			})
 
-			ginkgo.By("Wait for Model Initializer and Dataset Initializer to be in Ready status", func() {
-				gomega.Eventually(func() int32 {
-					gomega.Expect(k8sClient.Get(ctx, jobSetKey, jobSet)).Should(gomega.Succeed())
-					for _, rJobStatus := range jobSet.Status.ReplicatedJobsStatus {
-						if rJobStatus.Name == modelInitializerJob {
-							return rJobStatus.Ready
-						}
-					}
-					return 0
-				}, timeout, interval).Should(gomega.Equal(int32(numReplicas)))
-				gomega.Eventually(func() int32 {
-					gomega.Expect(k8sClient.Get(ctx, jobSetKey, jobSet)).Should(gomega.Succeed())
-					for _, rJobStatus := range jobSet.Status.ReplicatedJobsStatus {
-						if rJobStatus.Name == datasetInitializerJob {
-							return rJobStatus.Ready
-						}
-					}
-					return 0
-				}, timeout, interval).Should(gomega.Equal(int32(numReplicas)))
+			ginkgo.By("Wait for Model Initializer and Dataset Initializer to be in Ready/Succeeded status", func() {
+				gomega.Eventually(util.NumJobsReadyOrSucceeded, timeout, interval).
+					WithArguments(ctx, k8sClient, jobSet, modelInitializerJob).
+					Should(gomega.Equal(int32(numReplicas)))
+				gomega.Eventually(util.NumJobsReadyOrSucceeded, timeout, interval).
+					WithArguments(ctx, k8sClient, jobSet, datasetInitializerJob).
+					Should(gomega.Equal(int32(numReplicas)))
 			})
 
 			// We need to ensure that the E2E test reaches this check within 10 seconds of
@@ -383,9 +436,9 @@ var _ = ginkgo.Describe("JobSet", func() {
 					},
 					InitialDelaySeconds: 5,
 				},
-				nil)
+				10, nil)
 
-			rJobTrainer := dependsOnTestReplicatedJob(ns, trainerJob, numReplicas, nil,
+			rJobTrainer := dependsOnTestReplicatedJob(ns, trainerJob, numReplicas, nil, 0,
 				[]jobset.DependsOn{
 					{
 						Name:   coordinatorJob,
@@ -394,7 +447,6 @@ var _ = ginkgo.Describe("JobSet", func() {
 				})
 
 			jobSet := dependsOnTestJobSet(ns, []jobset.ReplicatedJob{rJobCoordinator, rJobTrainer})
-			jobSetKey := types.NamespacedName{Name: jobSet.Name, Namespace: jobSet.Namespace}
 
 			ginkgo.By("Create a JobSet with DependsOn", func() {
 				gomega.Expect(k8sClient.Create(ctx, jobSet)).Should(gomega.Succeed())
@@ -408,16 +460,10 @@ var _ = ginkgo.Describe("JobSet", func() {
 			// We need to ensure that the E2E test reaches this check within 10 seconds of
 			// the JobSet being created, as the Coordinator has a 10-second sleep timer.
 			// Otherwise, it will cause this check to fail.
-			ginkgo.By("Wait for Coordinator Job to be in Ready status", func() {
-				gomega.Eventually(func() int32 {
-					gomega.Expect(k8sClient.Get(ctx, jobSetKey, jobSet)).Should(gomega.Succeed())
-					for _, rJobStatus := range jobSet.Status.ReplicatedJobsStatus {
-						if rJobStatus.Name == coordinatorJob {
-							return rJobStatus.Ready
-						}
-					}
-					return 0
-				}, timeout, interval).Should(gomega.Equal(int32(numReplicas)))
+			ginkgo.By("Wait for Coordinator Job to be in Ready/Succeeded status", func() {
+				gomega.Eventually(util.NumJobsReadyOrSucceeded, timeout, interval).
+					WithArguments(ctx, k8sClient, jobSet, coordinatorJob).
+					Should(gomega.Equal(int32(numReplicas)))
 			})
 
 			ginkgo.By("Verify that Coordinator Job and Trainer Job is created", func() {
@@ -449,9 +495,9 @@ var _ = ginkgo.Describe("JobSet", func() {
 					},
 					InitialDelaySeconds: 5,
 				},
-				nil)
+				10, nil)
 
-			rJobTrainer := dependsOnTestReplicatedJob(ns, trainerJob, numReplicasTrainer, nil,
+			rJobTrainer := dependsOnTestReplicatedJob(ns, trainerJob, numReplicasTrainer, nil, 0,
 				[]jobset.DependsOn{
 					{
 						Name:   launcherJob,
@@ -460,7 +506,6 @@ var _ = ginkgo.Describe("JobSet", func() {
 				})
 
 			jobSet := dependsOnTestJobSet(ns, []jobset.ReplicatedJob{rJobLauncher, rJobTrainer})
-			jobSetKey := types.NamespacedName{Name: jobSet.Name, Namespace: jobSet.Namespace}
 
 			ginkgo.By("Create a JobSet with DependsOn", func() {
 				gomega.Expect(k8sClient.Create(ctx, jobSet)).Should(gomega.Succeed())
@@ -474,16 +519,10 @@ var _ = ginkgo.Describe("JobSet", func() {
 					Should(gomega.Equal(numReplicasLauncher))
 			})
 
-			ginkgo.By("Wait for Launcher to be in Ready status", func() {
-				gomega.Eventually(func() int32 {
-					gomega.Expect(k8sClient.Get(ctx, jobSetKey, jobSet)).Should(gomega.Succeed())
-					for _, rJobStatus := range jobSet.Status.ReplicatedJobsStatus {
-						if rJobStatus.Name == launcherJob {
-							return rJobStatus.Ready
-						}
-					}
-					return 0
-				}, timeout, interval).Should(gomega.Equal(int32(numReplicasLauncher)))
+			ginkgo.By("Wait for Launcher to be in Ready/Succeeded status", func() {
+				gomega.Eventually(util.NumJobsReadyOrSucceeded, timeout, interval).
+					WithArguments(ctx, k8sClient, jobSet, launcherJob).
+					Should(gomega.Equal(int32(numReplicasLauncher)))
 			})
 
 			// Launcher + Trainer has 6 replicas in total.
@@ -495,6 +534,58 @@ var _ = ginkgo.Describe("JobSet", func() {
 			ginkgo.By("Wait for JobSet to be Completed", func() {
 				util.JobSetCompleted(ctx, k8sClient, jobSet, timeout)
 			})
+		})
+	})
+
+	ginkgo.When("Using Server-Side Apply", func() {
+		ginkgo.It("should not increment generation when re-applying the same JobSet apply configuration", func() {
+			ctx := context.Background()
+
+			// Create a JobSet apply configuration
+			ginkgo.By("Creating JobSet using Server-Side Apply")
+			jobSetConfig := serverSideApplyTestJobSet(ns, "test")
+
+			// Convert the JobSet apply configuration into a client.Object
+			u, err := apiruntime.DefaultUnstructuredConverter.ToUnstructured(jobSetConfig)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			patch := &unstructured.Unstructured{Object: u}
+
+			// Create the JobSet using Server-Side Apply
+			gomega.Expect(k8sClient.Patch(ctx, patch.DeepCopy(), client.Apply, client.ForceOwnership, fieldManagerName)).
+				To(gomega.Succeed())
+
+			// Wait for the JobSet to be created and get its initial generation
+			ginkgo.By("Waiting for the JobSet to be created")
+			jobSetKey := types.NamespacedName{Name: *jobSetConfig.GetName(), Namespace: ns.Name}
+			jobSet := &jobset.JobSet{}
+			gomega.Eventually(func() error {
+				return k8sClient.Get(ctx, jobSetKey, jobSet)
+			}, timeout, interval).Should(gomega.Succeed())
+
+			generation := jobSet.Generation
+
+			ginkgo.By("Re-applying the same JobSet apply configuration once")
+			// Re-apply the original apply configuration
+			gomega.Expect(k8sClient.Patch(ctx, patch.DeepCopy(), client.Apply, client.ForceOwnership, fieldManagerName)).
+				To(gomega.Succeed())
+
+			ginkgo.By("Re-applying the same JobSet apply configuration twice")
+			// Re-apply the original apply configuration
+			gomega.Expect(k8sClient.Patch(ctx, patch.DeepCopy(), client.Apply, client.ForceOwnership, fieldManagerName)).
+				To(gomega.Succeed())
+
+			// Get the JobSet again and verify generation hasn't changed
+			ginkgo.By("Verifying the JobSet generation hasn't changed", func() {
+				jobSetReApply := &jobset.JobSet{}
+				gomega.Consistently(func() int64 {
+					gomega.Expect(k8sClient.Get(ctx, jobSetKey, jobSetReApply)).To(gomega.Succeed())
+					return jobSetReApply.Generation
+				}, 10*time.Second, interval).Should(gomega.Equal(generation))
+			})
+
+			ginkgo.By("Cleaning up the JobSet")
+			// Clean up by deleting the JobSet
+			gomega.Expect(k8sClient.Delete(ctx, jobSet)).To(gomega.Succeed())
 		})
 	})
 }) // end of Describe
@@ -620,7 +711,7 @@ func dependsOnTestJobSet(ns *corev1.Namespace, rJobs []jobset.ReplicatedJob) *jo
 	return jobSet
 }
 
-func dependsOnTestReplicatedJob(ns *corev1.Namespace, jobName string, numReplicas int, startupProbe *corev1.Probe, dependsOn []jobset.DependsOn) jobset.ReplicatedJob {
+func dependsOnTestReplicatedJob(ns *corev1.Namespace, jobName string, numReplicas int, startupProbe *corev1.Probe, sleepSeconds int, dependsOn []jobset.DependsOn) jobset.ReplicatedJob {
 	return testing.MakeReplicatedJob(jobName).
 		Job(testing.MakeJobTemplate("job", ns.Name).
 			PodSpec(corev1.PodSpec{
@@ -630,7 +721,7 @@ func dependsOnTestReplicatedJob(ns *corev1.Namespace, jobName string, numReplica
 						Name:         "sleep-test-container",
 						Image:        "bash:latest",
 						Command:      []string{"bash", "-c"},
-						Args:         []string{"sleep 10"},
+						Args:         []string{"sleep " + strconv.Itoa(sleepSeconds)},
 						StartupProbe: startupProbe,
 					},
 				},
@@ -638,4 +729,30 @@ func dependsOnTestReplicatedJob(ns *corev1.Namespace, jobName string, numReplica
 		Replicas(int32(numReplicas)).
 		DependsOn(dependsOn).
 		Obj()
+}
+
+// serverSideApplyTestJobSet creates a JobSet apply configuration for testing server-side apply
+func serverSideApplyTestJobSet(ns *corev1.Namespace, name string) *jobsetv1alpha2ac.JobSetApplyConfiguration {
+	return jobsetv1alpha2ac.JobSet(name, ns.Name).
+		WithSpec(jobsetv1alpha2ac.JobSetSpec().
+			WithReplicatedJobs(jobsetv1alpha2ac.ReplicatedJob().
+				WithName("worker").
+				WithReplicas(2).
+				WithTemplate(batchv1ac.JobTemplateSpec().
+					WithSpec(batchv1ac.JobSpec().
+						WithTemplate(corev1ac.PodTemplateSpec().
+							WithSpec(corev1ac.PodSpec().
+								WithRestartPolicy(corev1.RestartPolicyNever).
+								WithContainers(corev1ac.Container().
+									WithName("test-container").
+									WithImage("bash:latest").
+									WithCommand("bash", "-c").
+									WithArgs("echo 'Hello from server-side apply test'; sleep 5"),
+								),
+							),
+						),
+					),
+				),
+			),
+		)
 }

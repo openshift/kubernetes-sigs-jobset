@@ -75,7 +75,7 @@ var validOnJobFailureReasons = []string{
 	batchv1.JobReasonPodFailurePolicy,
 }
 
-//+kubebuilder:webhook:path=/mutate-jobset-x-k8s-io-v1alpha2-jobset,mutating=true,failurePolicy=fail,sideEffects=None,groups=jobset.x-k8s.io,resources=jobsets,verbs=create;update,versions=v1alpha2,name=mjobset.kb.io,admissionReviewVersions=v1
+//+kubebuilder:webhook:path=/mutate-jobset-x-k8s-io-v1alpha2-jobset,mutating=true,failurePolicy=fail,sideEffects=None,groups=jobset.x-k8s.io,resources=jobsets,verbs=create,versions=v1alpha2,name=mjobset.kb.io,admissionReviewVersions=v1
 
 // jobSetWebhook for defaulting and admission.
 type jobSetWebhook struct {
@@ -384,9 +384,9 @@ func validateCoordinator(js *jobset.JobSet) error {
 		return fmt.Errorf("coordinator job index %d is invalid for replicatedJob %s", js.Spec.Coordinator.JobIndex, replicatedJob.Name)
 	}
 
-	// Validate job is using indexed completion mode.
-	if replicatedJob.Template.Spec.CompletionMode == nil || *replicatedJob.Template.Spec.CompletionMode != batchv1.IndexedCompletion {
-		return fmt.Errorf("job for coordinator pod must be indexed completion mode")
+	// Validate job is using indexed completion mode and completions number is set.
+	if replicatedJob.Template.Spec.CompletionMode == nil || replicatedJob.Template.Spec.Completions == nil || *replicatedJob.Template.Spec.CompletionMode != batchv1.IndexedCompletion {
+		return fmt.Errorf("job for coordinator pod must be indexed completion mode, and completions number must be set")
 	}
 
 	// Validate Pod index.

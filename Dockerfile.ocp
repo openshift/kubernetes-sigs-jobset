@@ -1,6 +1,5 @@
 # Build the manager binary
-# TODO: Fix it to brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.24
-ARG BUILDER_IMAGE=brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_golang_1.24_test
+ARG BUILDER_IMAGE=brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.24
 ARG BASE_IMAGE=registry.redhat.io/rhel9-4-els/rhel-minimal:9.4
 
 # Build the manager binary
@@ -26,8 +25,8 @@ USER 65532:65532
 
 LABEL com.redhat.component="Job Set"
 LABEL name="jobset"
-LABEL release="0.8.1"
-LABEL version="0.8.1"
+LABEL release="0.9.0"
+LABEL version="0.9.0"
 LABEL url="https://github.com/openshift/kubernetes-sigs-jobset"
 LABEL vendor="Red Hat, Inc."
 LABEL description="JobSet is a Kubernetes-native API for managing a group of k8s Jobs as a unit. \

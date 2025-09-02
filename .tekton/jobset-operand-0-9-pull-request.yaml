@@ -12,7 +12,7 @@ metadata:
       event == "pull_request"
       && target_branch == "release-0.9"
       && (
-      ".tekton/jobset-operand-release-0-9-pull-request.yaml".pathChanged()
+      ".tekton/jobset-operand-0-9-pull-request.yaml".pathChanged()
       || "api/***".pathChanged()
       || "client-go/***".pathChanged()
       || "config/***".pathChanged()
@@ -27,10 +27,10 @@ metadata:
       )
   creationTimestamp:
   labels:
-    appstudio.openshift.io/application: jobset-operator-release-0-9
-    appstudio.openshift.io/component: jobset-operand-release-0-9
+    appstudio.openshift.io/application: jobset-operator-0-9
+    appstudio.openshift.io/component: jobset-operand-0-9
     pipelines.appstudio.openshift.io/type: build
-  name: jobset-operand-release-0-9-on-pull-request
+  name: jobset-operand-0-9-on-pull-request
   namespace: jobset-lws-pipeline-tenant
 spec:
   params:
@@ -39,7 +39,7 @@ spec:
     - name: revision
       value: '{{revision}}'
     - name: output-image
-      value: quay.io/redhat-user-workloads/jobset-lws-pipeline-tenant/jobset-operand-release-0-9:on-pr-{{revision}}
+      value: quay.io/redhat-user-workloads/jobset-lws-pipeline-tenant/jobset-operand-0-9:on-pr-{{revision}}
     - name: image-expires-after
       value: 5d
     - name: build-platforms
@@ -638,7 +638,7 @@ spec:
       - name: netrc
         optional: true
   taskRunTemplate:
-    serviceAccountName: build-pipeline-jobset-operand-release-0-9
+    serviceAccountName: build-pipeline-jobset-operand-0-9
   workspaces:
     - name: git-auth
       secret:

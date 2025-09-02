@@ -5,9 +5,11 @@ reviewers:
   - atiratree
   - kannon92
   - mrunalp
+  - ingvagabund
 approvers:
   - ardaguclu
   - atiratree
   - kannon92
   - mrunalp
+  - ingvagabund
 component: "kubernetes-sigs-jobset"

@@ -24,7 +24,8 @@ COPY --from=builder /workspace/LICENSE /licenses/.
 USER 65532:65532
 
 LABEL com.redhat.component="Job Set"
-LABEL name="jobset"
+LABEL cpe="cpe:/a:redhat:job_set:0.1::el9"
+LABEL name="job-set/jobset-rhel9"
 LABEL release="0.9.0"
 LABEL version="0.9.0"
 LABEL url="https://github.com/openshift/kubernetes-sigs-jobset"

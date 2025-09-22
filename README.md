@@ -45,6 +45,7 @@ efficiently and improve ML training goodput.
     [1.31](https://testgrid.k8s.io/sig-apps#pull-jobset-test-e2e-main-1-31)
     [1.32](https://testgrid.k8s.io/sig-apps#pull-jobset-test-e2e-main-1-32)
     [1.33](https://testgrid.k8s.io/sig-apps#pull-jobset-test-e2e-main-1-33)
+    [1.34](https://testgrid.k8s.io/sig-apps#pull-jobset-test-e2e-main-1-34)
     on Kind.
 - ✔️ Monitoring via [metrics](https://jobset.sigs.k8s.io/docs/reference/metrics).
 - ✔️ Security: RBAC based accessibility.
@@ -57,7 +58,7 @@ efficiently and improve ML training goodput.
 To install the latest release of JobSet in your cluster, run the following command:
 
 ```shell
-kubectl apply --server-side -f https://github.com/kubernetes-sigs/jobset/releases/download/v0.8.0/manifests.yaml
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/jobset/releases/download/v0.9.0/manifests.yaml
 ```
 
 The controller runs in the `jobset-system` namespace.

@@ -106,7 +106,9 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 generate: manifests controller-gen code-generator openapi-gen helm helm-docs ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations and client-go libraries.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./api/..."
 	./hack/update-codegen.sh $(GO_CMD) $(PROJECT_DIR)/bin
-	./hack/python-sdk/gen-sdk.sh
+	# TODO: fix python-sdk generation
+	# Nevertheless, any changes to the python-sdk should first be pushed to the upstream repo.
+	# ./hack/python-sdk/gen-sdk.sh
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -114,7 +116,7 @@ fmt: ## Run go fmt against code.
 
 .PHONY: fmt-verify
 fmt-verify:
-	@out=`$(GO_FMT) -w -l -d $$(find . -name '*.go')`; \
+	@out=`$(GO_FMT) -w -l -d $$(find . -name '*.go' -not -path "./vendor/*")`; \
 	if [ -n "$$out" ]; then \
 	    echo "$$out"; \
 	    exit 1; \
@@ -141,8 +143,10 @@ vet: ## Run go vet against code.
 ci-lint: golangci-lint
 	$(GOLANGCI_LINT) run --timeout 15m0s
 
+# TODO: add test-python-sdk target
+# Nevertheless, any changes to the python-sdk should first be pushed to the upstream repo.
 .PHONY: test
-test: manifests fmt vet envtest gotestsum test-python-sdk
+test: manifests fmt vet envtest gotestsum
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" $(GOTESTSUM) --junitfile $(ARTIFACTS)/junit.xml -- ./pkg/... ./api/... -coverprofile  $(ARTIFACTS)/cover.out
 
 .PHONY: test-python-sdk

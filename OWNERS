@@ -1,9 +1,15 @@
 # See the OWNERS docs at https://go.k8s.io/owners
 
-approvers:
-  - ahg-g
-  - andreyvelich
-  - danielvegamyhre
-  - kannon92
 reviewers:
-  - GiuseppeTT
+  - ardaguclu
+  - atiratree
+  - kannon92
+  - mrunalp
+  - ingvagabund
+approvers:
+  - ardaguclu
+  - atiratree
+  - kannon92
+  - mrunalp
+  - ingvagabund
+component: "kubernetes-sigs-jobset"

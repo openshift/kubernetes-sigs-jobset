@@ -15,6 +15,7 @@ GO_FMT ?= gofmt
 GO_VERSION := $(shell awk '/^go /{print $$2}' go.mod|head -n1)
 
 GIT_TAG ?= $(shell git describe --tags --dirty --always)
+BRANCH_NAME ?= release-0.9
 # Image URL to use all building/pushing image targets
 PLATFORMS ?= linux/amd64,linux/arm64,linux/s390x
 DOCKER_BUILDX_CMD ?= docker buildx
@@ -32,13 +33,6 @@ HELM_CHART_REPO := $(STAGING_IMAGE_REGISTRY)/jobset/charts
 BASE_IMAGE ?= gcr.io/distroless/static:nonroot
 BUILDER_IMAGE ?= golang:$(GO_VERSION)
 CGO_ENABLED ?= 0
-
-ifdef EXTRA_TAG
-IMAGE_EXTRA_TAG ?= $(IMAGE_REPO):$(EXTRA_TAG)
-endif
-ifdef IMAGE_EXTRA_TAG
-IMAGE_BUILD_EXTRA_OPTS += -t $(IMAGE_EXTRA_TAG)
-endif
 
 ARTIFACTS ?= $(PROJECT_DIR)/bin
 
@@ -63,6 +57,17 @@ KIND_CLUSTER_NAME ?= kind
 version_pkg = sigs.k8s.io/jobset/pkg/version
 LD_FLAGS += -X '$(version_pkg).GitVersion=$(GIT_TAG)'
 LD_FLAGS += -X '$(version_pkg).GitCommit=$(shell git rev-parse HEAD)'
+
+# Setting SED allows macos users to install GNU sed and use the latter
+# instead of the default BSD sed.
+ifeq ($(shell command -v gsed 2>/dev/null),)
+    SED ?= $(shell command -v sed)
+else
+    SED ?= $(shell command -v gsed)
+endif
+ifeq ($(shell ${SED} --version 2>&1 | grep -q GNU; echo $$?),1)
+    $(error !!! GNU sed is required. If on OS X, use 'brew install gnu-sed'.)
+endif
 
 .PHONY: all
 all: build
@@ -180,7 +185,7 @@ image-local-push: image-local-build
 
 .PHONY: image-build
 image-build:
-	$(IMAGE_BUILD_CMD) -t $(IMAGE_TAG) \
+	$(IMAGE_BUILD_CMD) -t $(IMAGE_TAG) -t $(IMAGE_REPO):$(BRANCH_NAME) \
 		--platform=$(PLATFORMS) \
 		--build-arg BASE_IMAGE=$(BASE_IMAGE) \
 		--build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) \
@@ -227,27 +232,38 @@ helm-lint: ## Run Helm chart lint test.
 helm-docs: helm-docs-plugin ## Generates markdown documentation for helm charts from requirements and values files.
 	$(HELM_DOCS) --sort-values-order=file
 
-.PHONY: helm-chart-push
-helm-chart-push: yq helm
-	EXTRA_TAG="$(EXTRA_TAG)" GIT_TAG="$(GIT_TAG)" IMAGE_REGISTRY="$(IMAGE_REGISTRY)" HELM_CHART_REPO="$(HELM_CHART_REPO)" IMAGE_REPO="$(IMAGE_REPO)" HELM="$(HELM)" YQ="$(YQ)" ./hack/push-chart.sh
+.PHONY: helm-chart-package
+helm-chart-package: yq helm ## Package a chart into a versioned chart archive file.
+	DEST_CHART_DIR=$(DEST_CHART_DIR) \
+	HELM="$(HELM)" YQ="$(YQ)" GIT_TAG="$(GIT_TAG)" IMAGE_REGISTRY="$(IMAGE_REGISTRY)" \
+	HELM_CHART_PUSH=$(HELM_CHART_PUSH) \
+	./hack/helm-chart-package.sh
 
+.PHONY: helm-chart-push
+helm-chart-push: HELM_CHART_PUSH=true
+helm-chart-push: helm-chart-package
 
 ##@ Release
-.PHONY: artifacts
-artifacts: kustomize helm yq
-	cd config/components/manager && $(KUSTOMIZE) edit set image controller=${IMAGE_TAG}
+
+# Chart version should not have "v".
+.PHONY: prepare-release-branch
+prepare-release-branch: kustomize ## Prepare the release branch with the release version.
+	cd config/components/manager && $(KUSTOMIZE) edit set image controller=${IMAGE_REPO}:${VERSION}
+	$(SED) -r "s|download/v[0-9]+\.[0-9]+\.[0-9]+|download/${VERSION}|g" -i README.md
+	$(SED) -r "s/v[0-9]+\.[0-9]+\.[0-9]+/${VERSION}/g" -i site/hugo.toml
+	$(SED) -r "s/[0-9]+\.[0-9]+\.[0-9]+/$(shell echo ${VERSION} | sed 's/^v//')/g" -i charts/jobset/Chart.yaml
+	make helm-docs
+
+.PHONY: clean-artifacts
+clean-artifacts: 
 	if [ -d artifacts ]; then rm -rf artifacts; fi
 	mkdir -p artifacts
+
+.PHONY: artifacts
+artifacts: clean-artifacts kustomize helm yq helm-chart-package ## Generate release artifacts.
 	$(KUSTOMIZE) build config/default -o artifacts/manifests.yaml
 	$(KUSTOMIZE) build config/prometheus -o artifacts/prometheus.yaml
 	@$(call clean-manifests)
-	# Update the image tag and policy
-	$(YQ)  e  '.image.repository = "$(IMAGE_REPO)" | .image.tag = "$(GIT_TAG)" | .image.pullPolicy = "IfNotPresent"' -i charts/jobset/values.yaml
-	# create the package. TODO: consider signing it
-	$(HELM) package --version $(GIT_TAG) --app-version $(GIT_TAG) charts/jobset -d artifacts/
-	mv artifacts/jobset-$(GIT_TAG).tgz artifacts/jobset-chart-$(GIT_TAG).tgz
-	# Revert the image changes
-	$(YQ)  e  '.image.repository = "$(IMAGE_REGISTRY)/$(IMAGE_NAME)" | .image.tag="main" | .image.pullPolicy = "Always"' -i charts/jobset/values.yaml
 
 GOLANGCI_LINT = $(PROJECT_DIR)/bin/golangci-lint
 .PHONY: golangci-lint

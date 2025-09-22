@@ -3,6 +3,7 @@
 # https://docs.snyk.io/snyk-cli/commands/ignore
 exclude:
   global:
+    - pkg/controllers/jobset_controller.go # SHA1 is used to generate a unique name for jobset
     - hack/**
     - vendor/**
     - "**/*_test.go"

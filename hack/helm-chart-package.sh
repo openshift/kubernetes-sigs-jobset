@@ -18,39 +18,41 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-DEST_CHART_DIR=${DEST_CHART_DIR:-bin/}
+DEST_CHART_DIR=${DEST_CHART_DIR:-artifacts/}
 
-EXTRA_TAG=${EXTRA_TAG:-$(git branch --show-current)} 
 GIT_TAG=${GIT_TAG:-$(git describe --tags --dirty --always)}
 
 STAGING_IMAGE_REGISTRY=${STAGING_IMAGE_REGISTRY:-us-central1-docker.pkg.dev/k8s-staging-images}
 IMAGE_REGISTRY=${IMAGE_REGISTRY:-${STAGING_IMAGE_REGISTRY}/jobset}
 HELM_CHART_REPO=${HELM_CHART_REPO:-${STAGING_IMAGE_REGISTRY}/jobset/charts}
-IMAGE_REPO=${IMAGE_REPO:-${IMAGE_REGISTRY}/jobset}
 
 HELM=${HELM:-./bin/helm}
 YQ=${YQ:-./bin/yq}
 
 readonly k8s_registry="registry.k8s.io/jobset"
-readonly semver_regex='^v([0-9]+)(\.[0-9]+){1,2}$'
+# This regex matches only JobSet versions for which the images are
+# going to be promoted to registry.k8s.io.
+readonly promoted_version_regex='^v([0-9]+)(\.[0-9]+){1,2}$'
 
-image_repository=${IMAGE_REPO}
-chart_version=${GIT_TAG}
-if [[ ${EXTRA_TAG} =~ ${semver_regex} ]]
+if [[ ${GIT_TAG} =~ ${promoted_version_regex} ]]
 then
-	image_repository=${k8s_registry}/jobset
-	chart_version=${EXTRA_TAG}
+	IMAGE_REGISTRY=${k8s_registry}
 fi
+
+chart_version="${GIT_TAG/#v/}"
 
 default_image_repo=$(${YQ} ".image.repository" charts/jobset/values.yaml)
 readonly default_image_repo
 
 # Update the image repo, tag and policy
-${YQ}  e  ".image.repository = \"${image_repository}\" | .image.tag = \"${chart_version}\" | .image.pullPolicy = \"IfNotPresent\"" -i charts/jobset/values.yaml
+${YQ}  e  ".image.repository = \"${IMAGE_REGISTRY}/jobset\" | .image.tag = \"${GIT_TAG}\" | .image.pullPolicy = \"IfNotPresent\"" -i charts/jobset/values.yaml
 
-${HELM} package --version "${chart_version}" --app-version "${chart_version}" charts/jobset -d "${DEST_CHART_DIR}"
+${HELM} package --version "${chart_version}" --app-version "${GIT_TAG}" charts/jobset -d "${DEST_CHART_DIR}"
 
 # Revert the image changes
 ${YQ}  e  ".image.repository = \"${default_image_repo}\" | .image.tag = \"main\" | .image.pullPolicy = \"Always\"" -i charts/jobset/values.yaml
-echo "pushing chart to ${HELM_CHART_REPO}"
-${HELM} push "bin/jobset-${chart_version}.tgz" "oci://${HELM_CHART_REPO}"
+
+if [ "$HELM_CHART_PUSH" = "true" ]; then
+	echo "pushing chart to ${HELM_CHART_REPO}"
+  ${HELM} push "${DEST_CHART_DIR}/jobset-${chart_version}.tgz" "oci://${HELM_CHART_REPO}"
+fi

@@ -11,7 +11,8 @@ metadata:
       event == "push"
       && target_branch == "release-0.9"
       && (
-      ".tekton/jobset-operand-0-1-push.yaml".pathChanged()
+      ".tekton/jobset-operand-0-1-pull-request.yaml".pathChanged()
+      || ".tekton/jobset-operand-0-1-push.yaml".pathChanged()
       || "api/***".pathChanged()
       || "client-go/***".pathChanged()
       || "config/***".pathChanged()

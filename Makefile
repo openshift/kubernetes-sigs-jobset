@@ -26,6 +26,17 @@ IMAGE_REPO ?= $(IMAGE_REGISTRY)/$(IMAGE_NAME)
 IMAGE_TAG ?= $(IMAGE_REPO):$(GIT_TAG)
 HELM_CHART_REPO := $(STAGING_IMAGE_REGISTRY)/jobset/charts
 
+# In-place restart agent image
+# TODO (k8s 1.35): Replace IN_PLACE_RESTART_AGENT_BASE_IMAGE with BASE_IMAGE (distroless/static:nonroot)
+# TODO (beta of in-place restart): Default IN_PLACE_RESTART_AGENT_IMAGE_REGISTRY to a valid registry URL to build and push the agent automatically
+IN_PLACE_RESTART_AGENT_IMAGE_REGISTRY ?=
+IN_PLACE_RESTART_AGENT_IMAGE_NAME := in-place-restart-agent
+IN_PLACE_RESTART_AGENT_IMAGE_REPO ?= $(IN_PLACE_RESTART_AGENT_IMAGE_REGISTRY)/$(IN_PLACE_RESTART_AGENT_IMAGE_NAME)
+IN_PLACE_RESTART_AGENT_IMAGE_TAG ?= $(IN_PLACE_RESTART_AGENT_IMAGE_REPO):$(GIT_TAG)
+IN_PLACE_RESTART_AGENT_DOCKERFILE ?= cmd/in-place-restart-agent/Dockerfile-example
+IN_PLACE_RESTART_AGENT_BASE_IMAGE ?= debian:bookworm-slim
+IN_PLACE_RESTART_AGENT_BUILDER_IMAGE ?= golang:$(GO_VERSION)
+
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 BASE_IMAGE ?= gcr.io/distroless/static:nonroot
@@ -99,6 +110,7 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 		rbac:roleName=manager-role output:rbac:artifacts:config=config/components/rbac\
 		webhook output:webhook:artifacts:config=config/components/webhook\
 		paths="./pkg/..."
+	cp -f ./config/components/crd/bases/jobset.x-k8s.io_jobsets.yaml ./charts/jobset/crds/
 
 .PHONY: generate
 generate: manifests controller-gen code-generator openapi-gen helm helm-docs ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations and client-go libraries.
@@ -138,8 +150,16 @@ vet: ## Run go vet against code.
 	$(GO_CMD) vet ./...
 
 .PHONY: ci-lint
-ci-lint: golangci-lint
+ci-lint: golangci-lint 
 	$(GOLANGCI_LINT) run --timeout 15m0s
+
+.PHONY: lint-api
+lint-api: golangci-lint-kal
+	$(GOLANGCI_LINT_KAL) run -v --config $(PROJECT_DIR)/.golangci-kal.yml
+	
+.PHONY: lint-api-fix
+lint-api-fix: golangci-lint-kal
+	$(GOLANGCI_LINT_KAL) run -v --config $(PROJECT_DIR)/.golangci-kal.yml --fix
 
 # TODO: add test-python-sdk target
 # Nevertheless, any changes to the python-sdk should first be pushed to the upstream repo.
@@ -153,7 +173,7 @@ test-python-sdk:
 	./hack/python-sdk/test-sdk.sh
 
 .PHONY: verify
-verify: vet fmt-verify ci-lint manifests generate helm-verify toc-verify generate-apiref
+verify: vet fmt-verify ci-lint lint-api manifests generate helm-verify toc-verify generate-apiref
 	git --no-pager diff --exit-code config api client-go sdk charts
 
 
@@ -194,6 +214,23 @@ image-build:
 .PHONY: image-push
 image-push: PUSH=--push
 image-push: image-build
+
+# Build the in-place restart agent image
+.PHONY: in-place-restart-agent-image-build
+in-place-restart-agent-image-build:
+	$(IMAGE_BUILD_CMD) \
+		-t $(IN_PLACE_RESTART_AGENT_IMAGE_TAG) \
+		-t $(IN_PLACE_RESTART_AGENT_IMAGE_REPO):$(BRANCH_NAME) \
+		--platform=$(PLATFORMS) \
+		--build-arg BASE_IMAGE=$(IN_PLACE_RESTART_AGENT_BASE_IMAGE) \
+		--build-arg BUILDER_IMAGE=$(IN_PLACE_RESTART_AGENT_BUILDER_IMAGE) \
+		--build-arg CGO_ENABLED=$(CGO_ENABLED) \
+		$(PUSH) \
+		$(IMAGE_BUILD_EXTRA_OPTS) ./
+
+.PHONY: in-place-restart-agent-image-push
+in-place-restart-agent-image-push: PUSH=--push
+in-place-restart-agent-image-push: in-place-restart-agent-image-build
 
 ##@ Deployment
 
@@ -265,9 +302,14 @@ artifacts: clean-artifacts kustomize helm yq helm-chart-package ## Generate rele
 	@$(call clean-manifests)
 
 GOLANGCI_LINT = $(PROJECT_DIR)/bin/golangci-lint
+GOLANGCI_LINT_KAL = $(PROJECT_DIR)/bin/golangci-lint-kube-api-linter
 .PHONY: golangci-lint
 golangci-lint: ## Download golangci-lint locally if necessary.
-	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.5
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v2.7.2
+
+.PHONY: golangci-lint-kal
+golangci-lint-kal: golangci-lint ## Build golangci-lint-kal from custom configuration.
+	cd $(PROJECT_DIR)/hack/golangci-kal; GOTOOLCHAIN=go1.25.0 $(GOLANGCI_LINT) custom; mv bin/golangci-lint-kube-api-linter $(PROJECT_DIR)/bin/
 
 GOTESTSUM = $(shell pwd)/bin/gotestsum
 .PHONY: gotestsum

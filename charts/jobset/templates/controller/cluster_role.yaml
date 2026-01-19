@@ -41,22 +41,21 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - pods
+  - persistentvolumeclaims
   verbs:
   - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - ""
   resources:
-  - secrets
+  - pods
   verbs:
+  - delete
   - get
   - list
+  - patch
   - update
   - watch
 - apiGroups:

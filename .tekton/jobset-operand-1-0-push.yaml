@@ -4,15 +4,14 @@ metadata:
   annotations:
     build.appstudio.openshift.io/repo: https://github.com/openshift/kubernetes-sigs-jobset?rev={{revision}}
     build.appstudio.redhat.com/commit_sha: '{{revision}}'
-    build.appstudio.redhat.com/pull_request_number: '{{pull_request_number}}'
     build.appstudio.redhat.com/target_branch: '{{target_branch}}'
-    pipelinesascode.tekton.dev/cancel-in-progress: "true"
+    pipelinesascode.tekton.dev/cancel-in-progress: "false"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
     pipelinesascode.tekton.dev/on-cel-expression: |
-      event == "pull_request"
-      && target_branch == "main"
+      event == "push"
+      && target_branch == "release-0.11.0"
       && (
-      ".tekton/jobset-operand-main-pull-request.yaml".pathChanged()
+      ".tekton/jobset-operand-1-0-push.yaml".pathChanged()
       || "api/***".pathChanged()
       || "client-go/***".pathChanged()
       || "config/***".pathChanged()
@@ -27,10 +26,10 @@ metadata:
       )
   creationTimestamp:
   labels:
-    appstudio.openshift.io/application: jobset-operator-main
-    appstudio.openshift.io/component: jobset-operand-main
+    appstudio.openshift.io/application: jobset-operator-1-0
+    appstudio.openshift.io/component: jobset-operand-1-0
     pipelines.appstudio.openshift.io/type: build
-  name: jobset-operand-main-on-pull-request
+  name: jobset-operand-1-0-on-push
   namespace: jobset-lws-pipeline-tenant
 spec:
   params:
@@ -39,9 +38,7 @@ spec:
     - name: revision
       value: '{{revision}}'
     - name: output-image
-      value: quay.io/redhat-user-workloads/jobset-lws-pipeline-tenant/jobset-operand-main:on-pr-{{revision}}
-    - name: image-expires-after
-      value: 5d
+      value: quay.io/redhat-user-workloads/jobset-lws-pipeline-tenant/jobset-operand-1-0:{{revision}}
     - name: build-platforms
       value:
         - linux/x86_64
@@ -666,7 +663,7 @@ spec:
       - name: netrc
         optional: true
   taskRunTemplate:
-    serviceAccountName: build-pipeline-jobset-operand-main
+    serviceAccountName: build-pipeline-jobset-operand-1-0
   workspaces:
     - name: git-auth
       secret:

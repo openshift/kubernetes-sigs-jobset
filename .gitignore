@@ -22,9 +22,6 @@ testbin/*
 *.swo
 *~
 
-# vendor files
-vendor
-
 # Local Netlify folder
 .netlify
 
@@ -47,8 +44,6 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-env/
-build/
 develop-eggs/
 dist/
 downloads/
@@ -114,8 +109,6 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-env/
-build/
 develop-eggs/
 dist/
 downloads/

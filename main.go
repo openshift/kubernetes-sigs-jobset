@@ -1,5 +1,5 @@
 /*
-Copyright 2023.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	schedulingv1beta1 "k8s.io/api/scheduling/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -42,8 +43,10 @@ import (
 	jobset "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 	"sigs.k8s.io/jobset/pkg/config"
 	"sigs.k8s.io/jobset/pkg/controllers"
+	"sigs.k8s.io/jobset/pkg/features"
 	"sigs.k8s.io/jobset/pkg/metrics"
 	"sigs.k8s.io/jobset/pkg/util/cert"
+	"sigs.k8s.io/jobset/pkg/util/tlsconfig"
 	"sigs.k8s.io/jobset/pkg/util/useragent"
 	"sigs.k8s.io/jobset/pkg/version"
 	"sigs.k8s.io/jobset/pkg/webhooks"
@@ -61,6 +64,7 @@ func init() {
 
 	utilruntime.Must(jobset.AddToScheme(scheme))
 	utilruntime.Must(configapi.AddToScheme(scheme))
+	utilruntime.Must(schedulingv1beta1.AddToScheme(scheme))
 
 	//+kubebuilder:scaffold:scheme
 }
@@ -156,6 +160,20 @@ func main() {
 		setupLog.Info("disabling http/2")
 		c.NextProtos = []string{"http/1.1"}
 	}
+
+	// Parse TLS options from configuration if feature gate is enabled
+	tlsOpts := []func(*tls.Config){disableHTTP2}
+	if features.Enabled(features.TLSOptions) && cfg.TLS != nil {
+		parsedTLS, err := tlsconfig.ParseTLSOptions(cfg.TLS)
+		if err != nil {
+			setupLog.Error(err, "Unable to parse TLS options from configuration")
+			os.Exit(1)
+		}
+		if parsedTLS != nil {
+			tlsOpts = append(tlsOpts, tlsconfig.BuildTLSOptions(parsedTLS)...)
+		}
+	}
+
 	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
 	// More info:
 	// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.1/pkg/metrics/server
@@ -164,12 +182,21 @@ func main() {
 		BindAddress:    metricsAddr,
 		SecureServing:  true,
 		FilterProvider: filters.WithAuthenticationAndAuthorization,
-		TLSOpts:        []func(*tls.Config){disableHTTP2},
+		TLSOpts:        tlsOpts,
 		CertDir:        options.Metrics.CertDir,
 		CertName:       options.Metrics.CertName,
 		KeyName:        options.Metrics.KeyName,
 	}
 	options.Metrics = metricsServerOptions
+
+	ctx := ctrl.SetupSignalHandler()
+	if cfg.InternalCertManagement != nil && *cfg.InternalCertManagement.Enable {
+		if err = cert.BootstrapCerts(ctx, kubeConfig, cfg); err != nil {
+			setupLog.Error(err, "Unable to bootstrap cert rotation")
+			os.Exit(1)
+		}
+	}
+
 	mgr, err := ctrl.NewManager(kubeConfig, options)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -185,8 +212,6 @@ func main() {
 	} else {
 		close(certsReady)
 	}
-
-	ctx := ctrl.SetupSignalHandler()
 	if err := controllers.SetupJobSetIndexes(ctx, mgr.GetFieldIndexer()); err != nil {
 		setupLog.Error(err, "unable to setup jobset reconciler indexes")
 		os.Exit(1)
@@ -196,11 +221,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Cert won't be ready until manager starts, so start a goroutine here which
-	// will block until the cert is ready before setting up the controllers.
-	// Controllers who register after manager starts will start directly.
-	go setupControllers(mgr, certsReady)
-
+	setupControllers(mgr)
 	setupHealthzAndReadyzCheck(mgr, certsReady)
 
 	setupLog.Info("starting manager")
@@ -210,42 +231,24 @@ func main() {
 	}
 }
 
-func setupControllers(mgr ctrl.Manager, certsReady chan struct{}) {
-	// The controllers won't work until the webhooks are operating,
-	// and the webhook won't work until the certs are all in places.
-	setupLog.Info("waiting for the cert generation to complete")
-	<-certsReady
-	setupLog.Info("certs ready")
-
+func setupControllers(mgr ctrl.Manager) {
 	// Set up JobSet controller.
-	jobSetController := controllers.NewJobSetReconciler(mgr.GetClient(), mgr.GetScheme(), mgr.GetEventRecorderFor("jobset"))
+	jobSetController := controllers.NewJobSetReconciler(mgr.GetClient(), mgr.GetScheme(), mgr.GetEventRecorder("jobset"))
 	if err := jobSetController.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "JobSet")
 		os.Exit(1)
 	}
 
 	// Set up pod reconciler.
-	podController := controllers.NewPodReconciler(mgr.GetClient(), mgr.GetScheme(), mgr.GetEventRecorderFor("pod"))
+	podController := controllers.NewPodReconciler(mgr.GetClient(), mgr.GetScheme(), mgr.GetEventRecorder("pod"))
 	if err := podController.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		os.Exit(1)
 	}
 
-	// Set up JobSet validating/defaulting webhook.
-	jobSetWebHook, err := webhooks.NewJobSetWebhook(mgr.GetClient())
-	if err != nil {
-		setupLog.Error(err, "unable to create webhook", "webhook", "JobSet")
-		os.Exit(1)
-	}
-	if err := jobSetWebHook.SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to set up webhook", "webhook", "JobSet")
-		os.Exit(1)
-	}
-
-	// Set up pod mutating and admission webhook.
-	podWebhook := webhooks.NewPodWebhook(mgr.GetClient())
-	if err := podWebhook.SetupWebhookWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to set up webhook", "webhook", "Pod")
+	// Set up webhooks.
+	if err := webhooks.Setup(mgr); err != nil {
+		setupLog.Error(err, "unable to set up webhooks")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder

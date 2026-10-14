@@ -13,7 +13,7 @@ GO_VERSION := $(shell awk '/^go /{print $$2}' go.mod|head -n1)
 
 GIT_TAG ?= $(shell git describe --tags --dirty --always)
 # Update for each release branch
-BRANCH_NAME = release-0.11
+BRANCH_NAME = release-0.13
 # Image URL to use all building/pushing image targets
 PLATFORMS ?= linux/amd64,linux/arm64,linux/s390x
 DOCKER_BUILDX_CMD ?= docker buildx
@@ -27,15 +27,12 @@ IMAGE_TAG ?= $(IMAGE_REPO):$(GIT_TAG)
 HELM_CHART_REPO := $(STAGING_IMAGE_REGISTRY)/jobset/charts
 
 # In-place restart agent image
-# TODO (k8s 1.35): Replace IN_PLACE_RESTART_AGENT_BASE_IMAGE with BASE_IMAGE (distroless/static:nonroot)
 # TODO (beta of in-place restart): Default IN_PLACE_RESTART_AGENT_IMAGE_REGISTRY to a valid registry URL to build and push the agent automatically
 IN_PLACE_RESTART_AGENT_IMAGE_REGISTRY ?=
 IN_PLACE_RESTART_AGENT_IMAGE_NAME := in-place-restart-agent
 IN_PLACE_RESTART_AGENT_IMAGE_REPO ?= $(IN_PLACE_RESTART_AGENT_IMAGE_REGISTRY)/$(IN_PLACE_RESTART_AGENT_IMAGE_NAME)
 IN_PLACE_RESTART_AGENT_IMAGE_TAG ?= $(IN_PLACE_RESTART_AGENT_IMAGE_REPO):$(GIT_TAG)
-IN_PLACE_RESTART_AGENT_DOCKERFILE ?= cmd/in-place-restart-agent/Dockerfile-example
-IN_PLACE_RESTART_AGENT_BASE_IMAGE ?= debian:bookworm-slim
-IN_PLACE_RESTART_AGENT_BUILDER_IMAGE ?= golang:$(GO_VERSION)
+IN_PLACE_RESTART_AGENT_DOCKERFILE ?= cmd/in-place-restart-agent/Dockerfile
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
@@ -55,9 +52,13 @@ INTEGRATION_TARGET ?= ./test/integration/...
 PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
 JOBSET_CHART_DIR := charts/jobset
 
-E2E_TARGET ?= ./test/e2e/...
+# Excludes ./test/e2e/scheduling/..., which requires a WAS-enabled cluster
+# and is run separately via `make test-e2e-kind-scheduling`.
+E2E_TEST_PATH ?= ./test/e2e ./test/e2e/customconfigs/...
 E2E_KIND_VERSION ?= kindest/node:v1.34.0
 USE_EXISTING_CLUSTER ?= false
+# E2E config folder to use (e.g., "default", "certmanager", etc.)
+E2E_TARGET_FOLDER ?= default
 
 # For local testing, we should allow user to use different kind cluster name
 # Default will delete default kind cluster
@@ -110,6 +111,9 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 		rbac:roleName=manager-role output:rbac:artifacts:config=config/components/rbac\
 		webhook output:webhook:artifacts:config=config/components/webhook\
 		paths="./pkg/..."
+	@# controller-gen does not implement the +k8s:maxItems marker used by
+	@# upstream Kubernetes types. Restore dropped bounds and validate the CRD.
+	$(GO_CMD) run ./hack/crdschema config/components/crd/bases/jobset.x-k8s.io_jobsets.yaml
 	cp -f ./config/components/crd/bases/jobset.x-k8s.io_jobsets.yaml ./charts/jobset/crds/
 
 .PHONY: generate
@@ -140,6 +144,14 @@ toc-update:
 toc-verify:
 	./hack/verify-toc.sh
 
+YAML_PROCESSOR_LOG_LEVEL ?= info
+
+.PHONY: update-helm
+update-helm: manifests ## Generate Helm templates from Kustomize manifests.
+	GOFLAGS=-mod=mod $(GO_CMD) run -modfile=$(PROJECT_DIR)/hack/tools/yaml-processor/go.mod \
+	sigs.k8s.io/kueue/hack/tools/yaml-processor \
+	-zap-log-level=$(YAML_PROCESSOR_LOG_LEVEL) $(PROJECT_DIR)/hack/processing-plan.yaml
+
 .PHONY: helm-verify
 helm-verify: helm-unittest helm-lint
 	${HELM} template charts/jobset
@@ -150,13 +162,17 @@ vet: ## Run go vet against code.
 	$(GO_CMD) vet ./...
 
 .PHONY: ci-lint
-ci-lint: golangci-lint 
+ci-lint: golangci-lint
 	$(GOLANGCI_LINT) run --timeout 15m0s
+
+.PHONY: ci-lint-fix
+ci-lint-fix: golangci-lint
+	$(GOLANGCI_LINT) run --timeout 15m0s --fix
 
 .PHONY: lint-api
 lint-api: golangci-lint-kal
 	$(GOLANGCI_LINT_KAL) run -v --config $(PROJECT_DIR)/.golangci-kal.yml
-	
+
 .PHONY: lint-api-fix
 lint-api-fix: golangci-lint-kal
 	$(GOLANGCI_LINT_KAL) run -v --config $(PROJECT_DIR)/.golangci-kal.yml --fix
@@ -173,7 +189,7 @@ test-python-sdk:
 	./hack/python-sdk/test-sdk.sh
 
 .PHONY: verify
-verify: vet fmt-verify ci-lint lint-api manifests generate helm-verify toc-verify generate-apiref
+verify: vet fmt-verify ci-lint lint-api manifests generate update-helm helm-verify toc-verify generate-apiref
 	git --no-pager diff --exit-code config api client-go sdk charts
 
 
@@ -215,15 +231,21 @@ image-build:
 image-push: PUSH=--push
 image-push: image-build
 
-# Build the in-place restart agent image
+# Build the in-place restart agent binary (sidecar container mode)
+.PHONY: in-place-restart-agent-build
+in-place-restart-agent-build: install-go-deps
+	$(GO_BUILD_ENV) $(GO_CMD) build -ldflags="$(LD_FLAGS)" -o bin/in-place-restart-agent cmd/in-place-restart-agent/main.go
+
+# Build the in-place restart agent image (sidecar container mode)
 .PHONY: in-place-restart-agent-image-build
 in-place-restart-agent-image-build:
 	$(IMAGE_BUILD_CMD) \
 		-t $(IN_PLACE_RESTART_AGENT_IMAGE_TAG) \
 		-t $(IN_PLACE_RESTART_AGENT_IMAGE_REPO):$(BRANCH_NAME) \
+		-f $(IN_PLACE_RESTART_AGENT_DOCKERFILE) \
 		--platform=$(PLATFORMS) \
-		--build-arg BASE_IMAGE=$(IN_PLACE_RESTART_AGENT_BASE_IMAGE) \
-		--build-arg BUILDER_IMAGE=$(IN_PLACE_RESTART_AGENT_BUILDER_IMAGE) \
+		--build-arg BASE_IMAGE=$(BASE_IMAGE) \
+		--build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) \
 		--build-arg CGO_ENABLED=$(CGO_ENABLED) \
 		$(PUSH) \
 		$(IMAGE_BUILD_EXTRA_OPTS) ./
@@ -291,12 +313,13 @@ prepare-release-branch: kustomize ## Prepare the release branch with the release
 	make helm-docs
 
 .PHONY: clean-artifacts
-clean-artifacts: 
+clean-artifacts:
 	if [ -d artifacts ]; then rm -rf artifacts; fi
 	mkdir -p artifacts
 
 .PHONY: artifacts
 artifacts: clean-artifacts kustomize helm yq helm-chart-package ## Generate release artifacts.
+	cd config/components/manager && $(KUSTOMIZE) edit set image controller=${IMAGE_TAG}
 	$(KUSTOMIZE) build config/default -o artifacts/manifests.yaml
 	$(KUSTOMIZE) build config/prometheus -o artifacts/prometheus.yaml
 	@$(call clean-manifests)
@@ -305,11 +328,11 @@ GOLANGCI_LINT = $(PROJECT_DIR)/bin/golangci-lint
 GOLANGCI_LINT_KAL = $(PROJECT_DIR)/bin/golangci-lint-kube-api-linter
 .PHONY: golangci-lint
 golangci-lint: ## Download golangci-lint locally if necessary.
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v2.7.2
+	GOBIN=$(PROJECT_DIR)/bin $(GO_CMD) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 
 .PHONY: golangci-lint-kal
 golangci-lint-kal: golangci-lint ## Build golangci-lint-kal from custom configuration.
-	cd $(PROJECT_DIR)/hack/golangci-kal; GOTOOLCHAIN=go1.25.0 $(GOLANGCI_LINT) custom; mv bin/golangci-lint-kube-api-linter $(PROJECT_DIR)/bin/
+	cd $(PROJECT_DIR)/hack/golangci-kal; GOTOOLCHAIN=go$(GO_VERSION) $(GOLANGCI_LINT) custom; mv bin/golangci-lint-kube-api-linter $(PROJECT_DIR)/bin/
 
 GOTESTSUM = $(shell pwd)/bin/gotestsum
 .PHONY: gotestsum
@@ -335,11 +358,14 @@ $(LOCALBIN):
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.2.1
-CONTROLLER_TOOLS_VERSION ?= v0.17.2
+CONTROLLER_TOOLS_VERSION ?= v0.22.0
 # ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script.
 ENVTEST_VERSION ?= $(shell $(GO_CMD) list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
 # ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries.
-ENVTEST_K8S_VERSION ?= $(shell $(GO_CMD) list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
+# When k8s.io/api is pinned to a pre-release (alpha/beta/rc) version, e.g. while developing
+# against unreleased APIs, envtest binaries are not published yet for that minor version, so
+# fall back to the previous minor release.
+ENVTEST_K8S_VERSION ?= $(shell awk '$$1 == "k8s.io/api" { v=$$2; sub(/^v0\./, "", v); split(v, parts, "."); minor=parts[1]; if (v ~ /-(alpha|beta|rc)/) minor--; printf "1.%d", minor; exit }' go.mod)
 HELM_VERSION ?= v3.17.1
 HELM_UNITTEST_VERSION ?= 0.7.2
 HELM_DOCS_VERSION ?= v1.14.2
@@ -382,7 +408,7 @@ code-generator:
 
 .PHONY: openapi-gen
 openapi-gen:
-	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install k8s.io/kube-openapi/cmd/openapi-gen@v0.0.0-20250910181357-589584f1c912
+	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install k8s.io/kube-openapi/cmd/openapi-gen@latest
 	$(PROJECT_DIR)/bin/openapi-gen --go-header-file hack/boilerplate.go.txt --output-dir api/jobset/v1alpha2 --output-pkg api/jobset/v1alpha2 --output-file openapi_generated.go --alsologtostderr ./api/jobset/v1alpha2
 
 .PHONY: envtest
@@ -398,7 +424,7 @@ ginkgo: ## Download ginkgo locally if necessary.
 KIND = $(shell pwd)/bin/kind
 .PHONY: kind
 kind:
-	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install sigs.k8s.io/kind@v0.29.0
+	@GOBIN=$(PROJECT_DIR)/bin GO111MODULE=on $(GO_CMD) install sigs.k8s.io/kind@v0.32.0
 
 .PHONY: kind-image-build
 kind-image-build: PLATFORMS=linux/amd64
@@ -412,7 +438,37 @@ test-integration: manifests fmt vet envtest ginkgo ## Run tests.
 
 .PHONY: test-e2e-kind
 test-e2e-kind: manifests kustomize fmt vet envtest ginkgo kind-image-build
-	E2E_KIND_VERSION=$(E2E_KIND_VERSION) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) ARTIFACTS=$(ARTIFACTS) IMAGE_TAG=$(IMAGE_TAG) ./hack/e2e-test.sh
+	E2E_KIND_VERSION=$(E2E_KIND_VERSION) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) ARTIFACTS=$(ARTIFACTS) IMAGE_TAG=$(IMAGE_TAG) E2E_TARGET_FOLDER=$(E2E_TARGET_FOLDER) E2E_TEST_PATH="$(E2E_TEST_PATH)" ./hack/e2e-test.sh
+
+.PHONY: test-e2e-kind-customconfigs
+test-e2e-kind-customconfigs: E2E_TEST_PATH = ./test/e2e/customconfigs/...
+test-e2e-kind-customconfigs: test-e2e-kind
+
+## WAS (Workload-Aware Scheduling) Kind cluster management
+# WAS targets build a Kind node image from a pinned Kubernetes release
+# with the scheduling.k8s.io APIs.
+WAS_KIND_CLUSTER_NAME ?= was-test
+WAS_K8S_VERSION ?= v1.37.0
+WAS_NODE_IMAGE ?= jobset/kind-node:$(WAS_K8S_VERSION)
+
+.PHONY: kind-scheduling-image-build
+kind-scheduling-image-build: kind ## Build a Kind node image from the pinned WAS Kubernetes release.
+	KIND=$(KIND) WAS_K8S_VERSION=$(WAS_K8S_VERSION) WAS_NODE_IMAGE=$(WAS_NODE_IMAGE) \
+	bash -c 'source ./hack/e2e-scheduling-cluster.sh && build_scheduling_node_image'
+
+.PHONY: test-e2e-kind-scheduling
+test-e2e-kind-scheduling: manifests kustomize fmt vet envtest ginkgo kind-image-build kind-scheduling-image-build ## Run scheduling-specific E2E tests on Kind with WAS feature gates enabled.
+	WAS_K8S_VERSION=$(WAS_K8S_VERSION) WAS_NODE_IMAGE=$(WAS_NODE_IMAGE) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) USE_EXISTING_CLUSTER=$(USE_EXISTING_CLUSTER) ARTIFACTS=$(ARTIFACTS) IMAGE_TAG=$(IMAGE_TAG) ./hack/e2e-scheduling-test.sh
+
+.PHONY: kind-cluster-scheduling
+kind-cluster-scheduling: kustomize kind-image-build ## Create a Kind cluster with WAS feature gates and deploy JobSet.
+	KIND=$(KIND) KUSTOMIZE=$(KUSTOMIZE) KIND_CLUSTER_NAME=$(WAS_KIND_CLUSTER_NAME) WAS_K8S_VERSION=$(WAS_K8S_VERSION) WAS_NODE_IMAGE=$(WAS_NODE_IMAGE) IMAGE_TAG=$(IMAGE_TAG) ARTIFACTS=$(ARTIFACTS) \
+	bash -c 'source ./hack/e2e-scheduling-cluster.sh && build_scheduling_node_image && create_scheduling_cluster && kind_load_image && deploy_scheduling_jobset && verify_scheduling_apis'
+
+.PHONY: kind-cluster-scheduling-delete
+kind-cluster-scheduling-delete: kind ## Delete the WAS Kind cluster and collect logs.
+	KIND=$(KIND) KIND_CLUSTER_NAME=$(WAS_KIND_CLUSTER_NAME) ARTIFACTS=$(ARTIFACTS) \
+	bash -c 'source ./hack/e2e-scheduling-cluster.sh && delete_scheduling_cluster'
 
 .PHONY: prometheus
 prometheus:

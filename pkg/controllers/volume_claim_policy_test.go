@@ -13,7 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2/ktesting"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -147,6 +147,44 @@ func TestReconcileVolumeClaimPolicies(t *testing.T) {
 			},
 		},
 		{
+			name: "nil whenDeleted defaults to Delete and sets the owner reference",
+			jobSet: testutils.MakeJobSet(jobSetName, ns).
+				VolumeClaimPolicies([]jobset.VolumeClaimPolicy{
+					{
+						Templates: []corev1.PersistentVolumeClaim{
+							{
+								ObjectMeta: metav1.ObjectMeta{
+									Name: "volume-unset",
+								},
+								Spec: testPVCSpec,
+							},
+						},
+						RetentionPolicy: &jobset.VolumeRetentionPolicy{},
+					},
+				}).Obj(),
+			expectedPVCs: []corev1.PersistentVolumeClaim{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "volume-unset-test-jobset",
+						Namespace: ns,
+						Labels: map[string]string{
+							jobset.JobSetNameKey: jobSetName,
+						},
+						OwnerReferences: []metav1.OwnerReference{
+							{
+								APIVersion:         "jobset.x-k8s.io/v1alpha2",
+								Kind:               "JobSet",
+								Name:               jobSetName,
+								Controller:         ptr.To(true),
+								BlockOwnerDeletion: ptr.To(true),
+							},
+						},
+					},
+					Spec: testPVCSpec,
+				},
+			},
+		},
+		{
 			name: "PVC already exists and should not be created again",
 			jobSet: testutils.MakeJobSet(jobSetName, ns).
 				VolumeClaimPolicies([]jobset.VolumeClaimPolicy{
@@ -221,14 +259,12 @@ func TestReconcileVolumeClaimPolicies(t *testing.T) {
 				fakeClientBuilder.WithObjects(tc.existingPVC)
 			}
 			fakeClient := fakeClientBuilder.Build()
-			eventBroadcaster := record.NewBroadcaster()
-			recorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "jobset-test-reconciler"})
 
 			// Create a JobSetReconciler instance with the fake client
 			r := &JobSetReconciler{
 				Client: fakeClient,
 				Scheme: scheme,
-				Record: recorder,
+				Record: events.NewFakeRecorder(32),
 			}
 
 			// Execute the function under test

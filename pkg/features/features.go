@@ -1,5 +1,5 @@
 /*
-Copyright 2023 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@ limitations under the License.
 package features
 
 import (
-	"fmt"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -27,12 +26,56 @@ import (
 )
 
 const (
-	// owner: @giuseppett
+	// owner: @GiuseppeTT
 	// kep: https://github.com/kubernetes-sigs/jobset/blob/main/keps/467-InPlaceRestart/README.md
 	//
 	// Enables in-place restart, allowing JobSet workloads to restart much faster by restarting
 	// healthy Pods in-place to skip the Pod deletion+schedule+creation process.
 	InPlaceRestart featuregate.Feature = "InPlaceRestart"
+
+	// owner: @kannon92
+	//
+	// Enables TLSOptions for TLSMinVersion and CipherSuites for JobSet servers.
+	// Graduated to GA; locked to its default (enabled).
+	TLSOptions featuregate.Feature = "TLSOptions"
+
+	// owner: @GiuseppeTT
+	// kep: https://github.com/kubernetes-sigs/jobset/blob/main/keps/262-ConfigurableFailurePolicy/README.md
+	//
+	// Enables the restart actions `RestartJob` and `RestartJobAndIgnoreMaxRestarts`, allowing JobSet to
+	// recover from failures (i.e., failed Jobs) by recreating only the failed Job instead of all Jobs
+	// as in `RestartJobSet`.
+	RestartJob featuregate.Feature = "RestartJob"
+
+	// owner: @aniket2405
+	// kep: https://github.com/kubernetes-sigs/jobset/blob/main/keps/463-ElasticJobsets/README.md
+	//
+	// ElasticJobSet enables the mutation of parallelism and completions for ReplicatedJobs
+	// to support dynamic horizontal pod-level scaling.
+	ElasticJobSet featuregate.Feature = "ElasticJobSet"
+
+	// owner: @jianqiaol
+	// kep: https://github.com/kubernetes-sigs/jobset/blob/main/keps/1282-execution-attempts/README.md
+	//
+	// Enables tracking and propagating JobSet execution attempts as a monotonic counter.
+	ExecutionAttemptsTracking featuregate.Feature = "ExecutionAttemptsTracking"
+
+	// owner: @yindia
+	// kep: https://github.com/kubernetes-sigs/jobset/blob/main/keps/1186-active-deadline-seconds/README.md
+	//
+	// Enables enforcement of the JobSet-level spec.activeDeadlineSeconds, which bounds the
+	// continuous active runtime of a JobSet before the controller marks it Failed and deletes
+	// its active Jobs. The .status.startTime field is only maintained while this gate is
+	// enabled; when the gate is off the controller clears any existing value.
+	JobSetActiveDeadlineSeconds featuregate.Feature = "JobSetActiveDeadlineSeconds"
+
+	// owner: @kehannon
+	// kep: https://github.com/kubernetes-sigs/jobset/blob/main/keps/969-WAS-integration/README.md
+	//
+	// JobSetWorkloadAwareSchedulingAPI enables integration with Workload-Aware Scheduling (WAS)
+	// building blocks from scheduling.k8s.io, allowing users to configure gang scheduling,
+	// topology constraints, and disruption policies on JobSets.
+	JobSetWorkloadAwareSchedulingAPI featuregate.Feature = "JobSetWorkloadAwareSchedulingAPI"
 )
 
 func init() {
@@ -47,6 +90,18 @@ func init() {
 // when adding or removing one entry.
 var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
 	InPlaceRestart: {Default: false, PreRelease: featuregate.Alpha},
+
+	TLSOptions: {Default: true, PreRelease: featuregate.GA, LockToDefault: true},
+
+	RestartJob: {Default: false, PreRelease: featuregate.Alpha},
+
+	ElasticJobSet: {Default: false, PreRelease: featuregate.Alpha},
+
+	ExecutionAttemptsTracking: {Default: false, PreRelease: featuregate.Alpha},
+
+	JobSetActiveDeadlineSeconds: {Default: false, PreRelease: featuregate.Alpha},
+
+	JobSetWorkloadAwareSchedulingAPI: {Default: false, PreRelease: featuregate.Alpha},
 }
 
 func SetFeatureGateDuringTest(tb testing.TB, f featuregate.Feature, value bool) {
@@ -56,11 +111,4 @@ func SetFeatureGateDuringTest(tb testing.TB, f featuregate.Feature, value bool) 
 // Enabled is helper for `utilfeature.DefaultFeatureGate.Enabled()`
 func Enabled(f featuregate.Feature) bool {
 	return utilfeature.DefaultFeatureGate.Enabled(f)
-}
-
-// SetEnable helper function that can be used to set the enabled value of a feature gate,
-// it should only be used in integration test pending the merge of
-// https://github.com/kubernetes/kubernetes/pull/118346
-func SetEnable(f featuregate.Feature, v bool) error {
-	return utilfeature.DefaultMutableFeatureGate.Set(fmt.Sprintf("%s=%v", f, v))
 }

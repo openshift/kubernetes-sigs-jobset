@@ -1,5 +1,5 @@
 #
-# Copyright 2025 The Kubernetes authors.
+# Copyright The Kubernetes Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 suite: Test cert-manager Issuer
 
 templates:
-  - certmanager/issuer.yaml
+  - certmanager/certificate.yaml
 
 release:
   name: jobset
@@ -33,3 +33,4 @@ tests:
           apiVersion: cert-manager.io/v1
           kind: Issuer
           name: jobset-self-signed-issuer
+          any: true

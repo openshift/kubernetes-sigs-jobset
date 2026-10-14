@@ -230,7 +230,8 @@ The name must match the regular expression &quot;^<a href="%5BA-Za-z0-9_,:%5D*%5
 <a href="#jobset-x-k8s-io-v1alpha2-FailurePolicyAction"><code>FailurePolicyAction</code></a>
 </td>
 <td>
-   <p>action to take if the rule is matched.</p>
+   <p>action to take if the rule is matched.
+Valid values are FailJobSet, RestartJobSet, RestartJobSetAndIgnoreMaxRestarts, RestartJob, RestartJobAndIgnoreMaxRestarts.</p>
 </td>
 </tr>
 <tr><td><code>onJobFailureReasons</code> <B>[Required]</B><br/>
@@ -269,6 +270,60 @@ An empty list will apply to all replicatedJobs.</p>
 </tbody>
 </table>
 
+## `JobScheduling`     {#jobset-x-k8s-io-v1alpha2-JobScheduling}
+    
+
+**Appears in:**
+
+- [ReplicatedJobScheduling](#jobset-x-k8s-io-v1alpha2-ReplicatedJobScheduling)
+
+
+<p>JobScheduling defines scheduling configuration applied at the individual
+Job (ReplicatedJob replica) level, enabling each replica to be scheduled as its
+own independent gang. This is part of the Gang-of-Gangs model: the JobSet
+controller compiles one PodGroupTemplate/PodGroup per Job (replica) of the
+targeted ReplicatedJob, sized to that Job's own parallelism, rather than one
+PodGroup shared across all of the ReplicatedJob's replicas.</p>
+
+
+<table class="table">
+<thead><tr><th width="30%">Field</th><th>Description</th></tr></thead>
+<tbody>
+    
+  
+<tr><td><code>schedulingPolicy</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#workloadpodgroupschedulingpolicy-v1alpha3-scheduling"><code>k8s.io/api/scheduling/v1alpha3.WorkloadPodGroupSchedulingPolicy</code></a>
+</td>
+<td>
+   <p>schedulingPolicy defines the scheduling policy (basic or gang) applied to each
+replica of the targeted ReplicatedJobs.</p>
+</td>
+</tr>
+<tr><td><code>schedulingConstraints</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#workloadpodgroupschedulingconstraints-v1alpha3-scheduling"><code>k8s.io/api/scheduling/v1alpha3.WorkloadPodGroupSchedulingConstraints</code></a>
+</td>
+<td>
+   <p>schedulingConstraints defines topology constraints applied to each replica of
+the targeted ReplicatedJobs.</p>
+</td>
+</tr>
+<tr><td><code>disruptionMode</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#workloadpodgroupdisruptionmode-v1alpha3-scheduling"><code>k8s.io/api/scheduling/v1alpha3.WorkloadPodGroupDisruptionMode</code></a>
+</td>
+<td>
+   <p>disruptionMode defines how pods within a single replica can be disrupted.</p>
+</td>
+</tr>
+<tr><td><code>resourceClaims</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#workloadpodgroupresourceclaim-v1alpha3-scheduling"><code>[]k8s.io/api/scheduling/v1alpha3.WorkloadPodGroupResourceClaim</code></a>
+</td>
+<td>
+   <p>resourceClaims defines claims shared by all pods in each Job's PodGroup.</p>
+</td>
+</tr>
+</tbody>
+</table>
+
 ## `JobSetRestartStrategy`     {#jobset-x-k8s-io-v1alpha2-JobSetRestartStrategy}
     
 (Alias of `string`)
@@ -280,6 +335,84 @@ An empty list will apply to all replicatedJobs.</p>
 
 
 
+
+## `JobSetScheduling`     {#jobset-x-k8s-io-v1alpha2-JobSetScheduling}
+    
+
+**Appears in:**
+
+- [JobSetSpec](#jobset-x-k8s-io-v1alpha2-JobSetSpec)
+
+
+<p>JobSetScheduling defines the Workload-Aware Scheduling configuration for a JobSet.
+A JobSet must configure scheduling using exactly one of two mutually exclusive
+models, since composite Gang-of-Gangs PodGroup hierarchies linking a parent
+PodGroup to leaf PodGroups are not implemented in alpha:</p>
+<ul>
+<li>the top-level (composite) model: set schedulingPolicy,
+schedulingConstraints, and/or disruptionMode to configure a single PodGroup
+covering the whole JobSet, and leave replicatedJobs unset.</li>
+<li>the per-ReplicatedJob (composite) model: set replicatedJobs and leave
+schedulingPolicy, schedulingConstraints, and disruptionMode unset at the top
+level. Every ReplicatedJob must then be targeted by exactly one
+replicatedJobs entry, since there is no top-level policy for an
+untargeted ReplicatedJob to fall back to.</li>
+</ul>
+<p>Sequenced startup (DependsOn or an InOrder StartupPolicy) creates Jobs
+sequentially, so a single top-level PodGroup could never reach its minCount. A
+JobSet using sequenced startup must therefore use the per-ReplicatedJob model;
+top-level scheduling (including the defaulted top-level gang) is rejected with
+sequenced startup.</p>
+
+
+<table class="table">
+<thead><tr><th width="30%">Field</th><th>Description</th></tr></thead>
+<tbody>
+    
+  
+<tr><td><code>schedulingPolicy</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#workloadcompositepodgroupschedulingpolicy-v1alpha3-scheduling"><code>k8s.io/api/scheduling/v1alpha3.WorkloadCompositePodGroupSchedulingPolicy</code></a>
+</td>
+<td>
+   <p>schedulingPolicy defines the composite-level scheduling policy for the entire JobSet.
+Defaults to Gang when spec.scheduling is set but schedulingPolicy is nil and
+replicatedJobs is not set.
+Top-level scheduling, including this defaulted top-level gang, is forbidden with
+sequenced startup (DependsOn or an InOrder StartupPolicy), since a single PodGroup
+spanning the whole JobSet could never reach its minCount while Jobs are created
+sequentially. Configure Gang policies under replicatedJobs instead in that case.
+Mutually exclusive with replicatedJobs: see the type-level comment.</p>
+</td>
+</tr>
+<tr><td><code>schedulingConstraints</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#workloadcompositepodgroupschedulingconstraints-v1alpha3-scheduling"><code>k8s.io/api/scheduling/v1alpha3.WorkloadCompositePodGroupSchedulingConstraints</code></a>
+</td>
+<td>
+   <p>schedulingConstraints defines composite-level topology constraints for the entire JobSet.
+Mutually exclusive with replicatedJobs: see the type-level comment.</p>
+</td>
+</tr>
+<tr><td><code>disruptionMode</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#workloadcompositepodgroupdisruptionmode-v1alpha3-scheduling"><code>k8s.io/api/scheduling/v1alpha3.WorkloadCompositePodGroupDisruptionMode</code></a>
+</td>
+<td>
+   <p>disruptionMode defines how the entire composite group can be disrupted.
+Mutually exclusive with replicatedJobs: see the type-level comment.</p>
+</td>
+</tr>
+<tr><td><code>replicatedJobs</code><br/>
+<a href="#jobset-x-k8s-io-v1alpha2-ReplicatedJobScheduling"><code>[]ReplicatedJobScheduling</code></a>
+</td>
+<td>
+   <p>replicatedJobs specifies per-ReplicatedJob composite-level scheduling overrides.
+Each entry targets one or more named ReplicatedJobs. Mutually exclusive with the
+top-level schedulingPolicy, schedulingConstraints, and disruptionMode fields: see
+the type-level comment. When set, every ReplicatedJob in the JobSet must be
+targeted by exactly one entry.</p>
+</td>
+</tr>
+</tbody>
+</table>
 
 ## `JobSetSpec`     {#jobset-x-k8s-io-v1alpha2-JobSetSpec}
     
@@ -365,7 +498,9 @@ jobset.sigs.k8s.io/coordinator=<!-- raw HTML omitted -->.<!-- raw HTML omitted -
 The built-in JobSet controller reconciles JobSets which don't have this
 field at all or the field value is the reserved string
 <code>jobset.sigs.k8s.io/jobset-controller</code>, but skips reconciling JobSets
-with a custom value for this field.</p>
+with a custom value for this field. Note that ttlSecondsAfterFinished
+cleanup still applies to externally managed JobSets once the managing
+controller has recorded a terminal condition.</p>
 <p>The value must be a valid domain-prefixed path (e.g. acme.io/foo) -
 all characters before the first &quot;/&quot; must be a valid subdomain as defined
 by RFC 1123. All characters trailing the first &quot;/&quot; must be valid HTTP Path
@@ -383,7 +518,25 @@ TTLSecondsAfterFinished after the JobSet finishes, it is eligible to be
 automatically deleted. When the JobSet is being deleted, its lifecycle
 guarantees (e.g. finalizers) will be honored. If this field is unset,
 the JobSet won't be automatically deleted. If this field is set to zero,
-the JobSet becomes eligible to be deleted immediately after it finishes.</p>
+the JobSet becomes eligible to be deleted immediately after it finishes.
+For JobSets that set managedBy to an external controller, TTL cleanup
+becomes eligible only after that controller records a terminal
+(Completed or Failed) condition.</p>
+</td>
+</tr>
+<tr><td><code>activeDeadlineSeconds</code><br/>
+<code>int64</code>
+</td>
+<td>
+   <p>activeDeadlineSeconds is the maximum duration in seconds, relative to
+status.startTime, that the JobSet may be continuously active before the
+JobSet controller marks it Failed and deletes its active Jobs.</p>
+<p>The timer does not accrue while the JobSet is suspended: startTime is
+cleared on suspend and reset when the JobSet resumes. The value must be a
+positive integer. The field is mutable: operators may raise or lower the
+deadline on a running JobSet, matching batch/v1.Job. The controller
+recomputes the remaining time from status.startTime on the next reconcile,
+so no timer state is reset on update.</p>
 </td>
 </tr>
 <tr><td><code>volumeClaimPolicies</code><br/>
@@ -394,6 +547,18 @@ the JobSet becomes eligible to be deleted immediately after it finishes.</p>
 to reference. JobSet controller automatically adds the required volume claims to the
 pod template. Every claim in this list must have at least one matching (by name)
 volumeMount in one container in the template.</p>
+</td>
+</tr>
+<tr><td><code>scheduling</code><br/>
+<a href="#jobset-x-k8s-io-v1alpha2-JobSetScheduling"><code>JobSetScheduling</code></a>
+</td>
+<td>
+   <p>scheduling defines the Workload-Aware Scheduling configuration for this JobSet.
+When nil, no scheduling objects are created and behavior is unchanged.
+When set (even to {}), the controller compiles a Workload resource
+(containing PodGroupTemplates) and materializes the corresponding
+PodGroup objects for the scheduler.
+Requires the JobSetWorkloadAwareSchedulingAPI feature gate.</p>
 </td>
 </tr>
 </tbody>
@@ -422,18 +587,43 @@ volumeMount in one container in the template.</p>
    <p>conditions track status</p>
 </td>
 </tr>
+<tr><td><code>startTime</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#time-v1-meta"><code>k8s.io/apimachinery/pkg/apis/meta/v1.Time</code></a>
+</td>
+<td>
+   <p>startTime is the timestamp from which activeDeadlineSeconds is measured, and
+also serves as the JobSet's active-start time. It is set when the JobSet
+first becomes active (unsuspended), cleared when the JobSet is suspended, and
+reset to the current time when the JobSet resumes, matching
+batch/v1.Job.status.startTime. It is maintained only while the
+JobSetActiveDeadlineSeconds feature gate is enabled (and cleared while the
+gate is off), independent of whether activeDeadlineSeconds is set.</p>
+</td>
+</tr>
 <tr><td><code>restarts</code><br/>
 <code>int32</code>
 </td>
 <td>
-   <p>restarts tracks the number of times the JobSet has restarted (i.e. recreated in case of RecreateAll policy).</p>
+   <p>restarts tracks the number of times the JobSet has been globally restarted.
+That is, restarts is the number of times the restart action RestartJobSet or RestartJobSetAndIgnoreMaxRestarts have been executed and led to the recreation of all Jobs.</p>
 </td>
 </tr>
 <tr><td><code>restartsCountTowardsMax</code><br/>
 <code>int32</code>
 </td>
 <td>
-   <p>restartsCountTowardsMax tracks the number of times the JobSet has restarted that counts towards the maximum allowed number of restarts.</p>
+   <p>restartsCountTowardsMax tracks the number of times the JobSet has been globally restarted that counts towards the maximum allowed number of restarts.
+That is, restartsCountTowardsMax is the number of times the restart action RestartJobSet has been executed and led to the recreation of all Jobs.</p>
+</td>
+</tr>
+<tr><td><code>executionAttempts</code><br/>
+<code>int32</code>
+</td>
+<td>
+   <p>executionAttempts tracks the number of execution lifecycles of the JobSet.
+A value of nil indicates the JobSet has not yet executed (e.g. created suspended).
+A value of 0 indicates the initial execution attempt, and values &gt; 0 indicate
+subsequent execution attempts triggered by failure policy restarts or suspend/resume cycles.</p>
 </td>
 </tr>
 <tr><td><code>terminalState</code><br/>
@@ -594,6 +784,75 @@ This API is mutually exclusive with the StartupPolicy API.</p>
 </tbody>
 </table>
 
+## `ReplicatedJobScheduling`     {#jobset-x-k8s-io-v1alpha2-ReplicatedJobScheduling}
+    
+
+**Appears in:**
+
+- [JobSetScheduling](#jobset-x-k8s-io-v1alpha2-JobSetScheduling)
+
+
+<p>ReplicatedJobScheduling targets one or more named ReplicatedJobs with
+composite-level scheduling configuration.</p>
+
+
+<table class="table">
+<thead><tr><th width="30%">Field</th><th>Description</th></tr></thead>
+<tbody>
+    
+  
+<tr><td><code>targetReplicatedJobs</code> <B>[Required]</B><br/>
+<code>[]string</code>
+</td>
+<td>
+   <p>targetReplicatedJobs is the list of ReplicatedJob names this policy applies to.
+When more than one name is listed, the targeted ReplicatedJobs share a single
+PodGroup. Every name must be unique across all replicatedJobs entries.
+The list is limited to a maximum of 50 jobs
+and the length of each replicatedJobName can not exceed 256 characters.</p>
+</td>
+</tr>
+<tr><td><code>schedulingPolicy</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#workloadcompositepodgroupschedulingpolicy-v1alpha3-scheduling"><code>k8s.io/api/scheduling/v1alpha3.WorkloadCompositePodGroupSchedulingPolicy</code></a>
+</td>
+<td>
+   <p>schedulingPolicy defines the composite-level scheduling policy (basic or gang) for
+jobs created by the targeted ReplicatedJobs.
+Defaults to Gang when not specified.</p>
+</td>
+</tr>
+<tr><td><code>schedulingConstraints</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#workloadcompositepodgroupschedulingconstraints-v1alpha3-scheduling"><code>k8s.io/api/scheduling/v1alpha3.WorkloadCompositePodGroupSchedulingConstraints</code></a>
+</td>
+<td>
+   <p>schedulingConstraints defines composite-level topology constraints for the targeted
+ReplicatedJobs' pods.</p>
+</td>
+</tr>
+<tr><td><code>disruptionMode</code><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#workloadcompositepodgroupdisruptionmode-v1alpha3-scheduling"><code>k8s.io/api/scheduling/v1alpha3.WorkloadCompositePodGroupDisruptionMode</code></a>
+</td>
+<td>
+   <p>disruptionMode defines how pods within the targeted ReplicatedJobs can be disrupted.</p>
+</td>
+</tr>
+<tr><td><code>job</code><br/>
+<a href="#jobset-x-k8s-io-v1alpha2-JobScheduling"><code>JobScheduling</code></a>
+</td>
+<td>
+   <p>job defines job-level (replica-level) scheduling configuration,
+where each replica of the targeted ReplicatedJobs forms its own independent gang
+(i.e. one PodGroup per Job) instead of sharing a single PodGroup across every
+replica of the targeted ReplicatedJobs. This is part of the Gang-of-Gangs model.
+When set, targetReplicatedJobs must contain exactly one ReplicatedJob name, and
+the composite-level schedulingPolicy, schedulingConstraints, and disruptionMode
+fields on this ReplicatedJobScheduling must not be set, since they configure
+a shared PodGroup that job replaces with one PodGroup per Job.</p>
+</td>
+</tr>
+</tbody>
+</table>
+
 ## `ReplicatedJobStatus`     {#jobset-x-k8s-io-v1alpha2-ReplicatedJobStatus}
     
 
@@ -653,6 +912,22 @@ which are not marked for deletion.</p>
 </td>
 <td>
    <p>suspended is the number of child Jobs which are in a suspended state.</p>
+</td>
+</tr>
+<tr><td><code>jobRestarts</code><br/>
+<code>[]int32</code>
+</td>
+<td>
+   <p>jobRestarts tracks the number of times the Jobs have been individually restarted.
+That is, jobRestarts[jobIndex] is the number of times the restart action RestartJob or RestartJobAndIgnoreMaxRestarts have been executed for the Job with index jobIndex and led to its recreation without affecting the other Jobs.</p>
+</td>
+</tr>
+<tr><td><code>jobRestartsCountTowardsMax</code><br/>
+<code>[]int32</code>
+</td>
+<td>
+   <p>jobRestartsCountTowardsMax tracks the number of times the Jobs have been individually restarted that count towards the maximum allowed number of restarts.
+That is, jobRestartsCountTowardsMax[jobIndex] is the number of times the restart action RestartJob has been executed for the Job with index jobIndex and led to its recreation without affecting the other Jobs.</p>
 </td>
 </tr>
 </tbody>

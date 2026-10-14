@@ -121,6 +121,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                                         ], 
                                     path = '', 
                                     port = '', 
+                                    protocol = '', 
                                     scheme = '', ), 
                                 sleep = jobset.models.io/k8s/api/core/v1/sleep_action.io.k8s.api.core.v1.SleepAction(
                                     seconds = 56, ), 
@@ -132,6 +133,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                         liveness_probe = jobset.models.io/k8s/api/core/v1/probe.io.k8s.api.core.v1.Probe(
                             failure_threshold = 56, 
                             grpc = jobset.models.io/k8s/api/core/v1/grpc_action.io.k8s.api.core.v1.GRPCAction(
+                                mode = '', 
                                 port = 56, 
                                 service = '', ), 
                             initial_delay_seconds = 56, 
@@ -226,6 +228,9 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                             ], 
                         volume_mounts = [
                             jobset.models.io/k8s/api/core/v1/volume_mount.io.k8s.api.core.v1.VolumeMount(
+                                bind_mount_options = [
+                                    ''
+                                    ], 
                                 mount_path = '', 
                                 mount_propagation = '', 
                                 name = '', 
@@ -308,6 +313,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                                         ], 
                                     path = '', 
                                     port = '', 
+                                    protocol = '', 
                                     scheme = '', ), 
                                 sleep = jobset.models.io/k8s/api/core/v1/sleep_action.io.k8s.api.core.v1.SleepAction(
                                     seconds = 56, ), 
@@ -319,6 +325,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                         liveness_probe = jobset.models.io/k8s/api/core/v1/probe.io.k8s.api.core.v1.Probe(
                             failure_threshold = 56, 
                             grpc = jobset.models.io/k8s/api/core/v1/grpc_action.io.k8s.api.core.v1.GRPCAction(
+                                mode = '', 
                                 port = 56, 
                                 service = '', ), 
                             initial_delay_seconds = 56, 
@@ -414,6 +421,9 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                             ], 
                         volume_mounts = [
                             jobset.models.io/k8s/api/core/v1/volume_mount.io.k8s.api.core.v1.VolumeMount(
+                                bind_mount_options = [
+                                    ''
+                                    ], 
                                 mount_path = '', 
                                 mount_propagation = '', 
                                 name = '', 
@@ -423,6 +433,11 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                                 sub_path_expr = '', )
                             ], 
                         working_dir = '', )
+                    ],
+                eviction_responders = [
+                    jobset.models.io/k8s/api/core/v1/eviction_responder.io.k8s.api.core.v1.EvictionResponder(
+                        name = '', 
+                        priority = 56, )
                     ],
                 host_aliases = [
                     jobset.models.io/k8s/api/core/v1/host_alias.io.k8s.api.core.v1.HostAlias(
@@ -499,6 +514,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                                         ], 
                                     path = '', 
                                     port = '', 
+                                    protocol = '', 
                                     scheme = '', ), 
                                 sleep = jobset.models.io/k8s/api/core/v1/sleep_action.io.k8s.api.core.v1.SleepAction(
                                     seconds = 56, ), 
@@ -510,6 +526,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                         liveness_probe = jobset.models.io/k8s/api/core/v1/probe.io.k8s.api.core.v1.Probe(
                             failure_threshold = 56, 
                             grpc = jobset.models.io/k8s/api/core/v1/grpc_action.io.k8s.api.core.v1.GRPCAction(
+                                mode = '', 
                                 port = 56, 
                                 service = '', ), 
                             initial_delay_seconds = 56, 
@@ -604,6 +621,9 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                             ], 
                         volume_mounts = [
                             jobset.models.io/k8s/api/core/v1/volume_mount.io.k8s.api.core.v1.VolumeMount(
+                                bind_mount_options = [
+                                    ''
+                                    ], 
                                 mount_path = '', 
                                 mount_propagation = '', 
                                 name = '', 
@@ -655,6 +675,8 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                     jobset.models.io/k8s/api/core/v1/pod_scheduling_gate.io.k8s.api.core.v1.PodSchedulingGate(
                         name = '', )
                     ],
+                scheduling_group = jobset.models.io/k8s/api/core/v1/pod_scheduling_group.io.k8s.api.core.v1.PodSchedulingGroup(
+                    pod_group_name = '', ),
                 security_context = jobset.models.io/k8s/api/core/v1/pod_security_context.io.k8s.api.core.v1.PodSecurityContext(
                     app_armor_profile = jobset.models.io/k8s/api/core/v1/app_armor_profile.io.k8s.api.core.v1.AppArmorProfile(
                         localhost_profile = '', 
@@ -759,11 +781,13 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                             volume_id = '', ), 
                         config_map = jobset.models.io/k8s/api/core/v1/config_map_volume_source.io.k8s.api.core.v1.ConfigMapVolumeSource(
                             default_mode = 56, 
+                            default_user = 56, 
                             items = [
                                 jobset.models.io/k8s/api/core/v1/key_to_path.io.k8s.api.core.v1.KeyToPath(
                                     key = '', 
                                     mode = 56, 
-                                    path = '', )
+                                    path = '', 
+                                    user = 56, )
                                 ], 
                             name = '', 
                             optional = True, ), 
@@ -777,9 +801,11 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                                 'key' : ''
                                 }, ), 
                         downward_api = jobset.models.io/k8s/api/core/v1/downward_api_volume_source.io.k8s.api.core.v1.DownwardAPIVolumeSource(
-                            default_mode = 56, ), 
+                            default_mode = 56, 
+                            default_user = 56, ), 
                         empty_dir = jobset.models.io/k8s/api/core/v1/empty_dir_volume_source.io.k8s.api.core.v1.EmptyDirVolumeSource(
                             medium = '', 
+                            mode = 56, 
                             size_limit = '', ), 
                         ephemeral = jobset.models.io/k8s/api/core/v1/ephemeral_volume_source.io.k8s.api.core.v1.EphemeralVolumeSource(
                             volume_claim_template = jobset.models.io/k8s/api/core/v1/persistent_volume_claim_template.io.k8s.api.core.v1.PersistentVolumeClaimTemplate(
@@ -927,6 +953,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                             volume_id = '', ), 
                         projected = jobset.models.io/k8s/api/core/v1/projected_volume_source.io.k8s.api.core.v1.ProjectedVolumeSource(
                             default_mode = 56, 
+                            default_user = 56, 
                             sources = [
                                 jobset.models.io/k8s/api/core/v1/volume_projection.io.k8s.api.core.v1.VolumeProjection(
                                     cluster_trust_bundle = jobset.models.io/k8s/api/core/v1/cluster_trust_bundle_projection.io.k8s.api.core.v1.ClusterTrustBundleProjection(
@@ -934,7 +961,8 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                                         name = '', 
                                         optional = True, 
                                         path = '', 
-                                        signer_name = '', ), 
+                                        signer_name = '', 
+                                        user = 56, ), 
                                     pod_certificate = jobset.models.io/k8s/api/core/v1/pod_certificate_projection.io.k8s.api.core.v1.PodCertificateProjection(
                                         certificate_chain_path = '', 
                                         credential_bundle_path = '', 
@@ -942,6 +970,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                                         key_type = '', 
                                         max_expiration_seconds = 56, 
                                         signer_name = '', 
+                                        user = 56, 
                                         user_annotations = {
                                             'key' : ''
                                             }, ), 
@@ -951,7 +980,8 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                                     service_account_token = jobset.models.io/k8s/api/core/v1/service_account_token_projection.io.k8s.api.core.v1.ServiceAccountTokenProjection(
                                         audience = '', 
                                         expiration_seconds = 56, 
-                                        path = '', ), )
+                                        path = '', 
+                                        user = 56, ), )
                                 ], ), 
                         quobyte = jobset.models.io/k8s/api/core/v1/quobyte_volume_source.io.k8s.api.core.v1.QuobyteVolumeSource(
                             group = '', 
@@ -983,6 +1013,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                             volume_name = '', ), 
                         secret = jobset.models.io/k8s/api/core/v1/secret_volume_source.io.k8s.api.core.v1.SecretVolumeSource(
                             default_mode = 56, 
+                            default_user = 56, 
                             optional = True, 
                             secret_name = '', ), 
                         storageos = jobset.models.io/k8s/api/core/v1/storage_os_volume_source.io.k8s.api.core.v1.StorageOSVolumeSource(
@@ -995,11 +1026,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                             storage_policy_id = '', 
                             storage_policy_name = '', 
                             volume_path = '', ), )
-                    ],
-                workload_ref = jobset.models.io/k8s/api/core/v1/workload_reference.io.k8s.api.core.v1.WorkloadReference(
-                    name = '', 
-                    pod_group = '', 
-                    pod_group_replica_key = '', )
+                    ]
             )
         else:
             return IoK8sApiCoreV1PodSpec(
@@ -1061,6 +1088,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                                         ], 
                                     path = '', 
                                     port = '', 
+                                    protocol = '', 
                                     scheme = '', ), 
                                 sleep = jobset.models.io/k8s/api/core/v1/sleep_action.io.k8s.api.core.v1.SleepAction(
                                     seconds = 56, ), 
@@ -1072,6 +1100,7 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                         liveness_probe = jobset.models.io/k8s/api/core/v1/probe.io.k8s.api.core.v1.Probe(
                             failure_threshold = 56, 
                             grpc = jobset.models.io/k8s/api/core/v1/grpc_action.io.k8s.api.core.v1.GRPCAction(
+                                mode = '', 
                                 port = 56, 
                                 service = '', ), 
                             initial_delay_seconds = 56, 
@@ -1166,6 +1195,9 @@ class TestIoK8sApiCoreV1PodSpec(unittest.TestCase):
                             ], 
                         volume_mounts = [
                             jobset.models.io/k8s/api/core/v1/volume_mount.io.k8s.api.core.v1.VolumeMount(
+                                bind_mount_options = [
+                                    ''
+                                    ], 
                                 mount_path = '', 
                                 mount_propagation = '', 
                                 name = '', 

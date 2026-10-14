@@ -1,0 +1,26 @@
+title: Add ActiveDeadlineSeconds for JobSet
+kep-number: 1186
+authors:
+  - "@yindia"
+status: implementable
+creation-date: 2026-08-26
+reviewers:
+  - "@kannon92"
+approvers:
+  - TBD
+see-also:
+  - "/keps/262-ConfigurableFailurePolicy"
+  - "/keps/1150-mutable-suspended-job-resources"
+replaces:
+  - "NA"
+stage: alpha
+latest-milestone: "v0.13.0"
+milestone:
+  alpha: "v0.13.0"
+  beta: "v0.14.0"
+  stable: "v0.16.0"
+feature-gates:
+  - name: JobSetActiveDeadlineSeconds
+disable-supported: true
+metrics:
+  - jobset_active_deadline_exceeded_total

@@ -1,9 +1,12 @@
 /*
-Copyright 2023 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-    http://www.apache.org/licenses/LICENSE-2.0
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -36,8 +39,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &jobsetv1alpha2.FailurePolicyApplyConfiguration{}
 	case v1alpha2.SchemeGroupVersion.WithKind("FailurePolicyRule"):
 		return &jobsetv1alpha2.FailurePolicyRuleApplyConfiguration{}
+	case v1alpha2.SchemeGroupVersion.WithKind("JobScheduling"):
+		return &jobsetv1alpha2.JobSchedulingApplyConfiguration{}
 	case v1alpha2.SchemeGroupVersion.WithKind("JobSet"):
 		return &jobsetv1alpha2.JobSetApplyConfiguration{}
+	case v1alpha2.SchemeGroupVersion.WithKind("JobSetScheduling"):
+		return &jobsetv1alpha2.JobSetSchedulingApplyConfiguration{}
 	case v1alpha2.SchemeGroupVersion.WithKind("JobSetSpec"):
 		return &jobsetv1alpha2.JobSetSpecApplyConfiguration{}
 	case v1alpha2.SchemeGroupVersion.WithKind("JobSetStatus"):
@@ -46,6 +53,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &jobsetv1alpha2.NetworkApplyConfiguration{}
 	case v1alpha2.SchemeGroupVersion.WithKind("ReplicatedJob"):
 		return &jobsetv1alpha2.ReplicatedJobApplyConfiguration{}
+	case v1alpha2.SchemeGroupVersion.WithKind("ReplicatedJobScheduling"):
+		return &jobsetv1alpha2.ReplicatedJobSchedulingApplyConfiguration{}
 	case v1alpha2.SchemeGroupVersion.WithKind("ReplicatedJobStatus"):
 		return &jobsetv1alpha2.ReplicatedJobStatusApplyConfiguration{}
 	case v1alpha2.SchemeGroupVersion.WithKind("StartupPolicy"):

@@ -54,7 +54,7 @@ kubectl apply --server-side -f https://github.com/kubernetes-sigs/jobset/release
 To install a released version of JobSet in your cluster using Helm, run the following command:
 
 ```shell
-helm install jobset oci://registry.k8s.io/jobset/charts/jobset --version $VERSION --create-namespace --namespace=jobset-system
+helm install jobset oci://registry.k8s.io/jobset/charts/jobset --version ${VERSION#v} --create-namespace --namespace=jobset-system
 ```
 
 For more HELM configurations options, follow the [instructions](https://github.com/kubernetes-sigs/jobset/tree/main/charts/jobset).
@@ -158,7 +158,7 @@ VERSION={{< param "version" >}}
 kubectl delete -f https://github.com/kubernetes-sigs/jobset/releases/download/$VERSION/manifests.yaml
 ```
 
-To uninstall a released version of Kueue from your cluster by Helm, run the following command:
+To uninstall a released version of JobSet from your cluster by Helm, run the following command:
 
 ```shell
 helm uninstall jobset --namespace jobset-system
@@ -290,4 +290,3 @@ Next, in the file ``jobset/config/default/kustomization.yaml`` replace ``../comp
 ``../components/certmanager`` then uncomment all the lines beginning with ``[CERTMANAGER]``.
 
 Finally, apply these configurations to your cluster with ``kubectl apply --server-side -k config/default``.
-

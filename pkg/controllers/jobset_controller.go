@@ -1,5 +1,5 @@
 /*
-Copyright 2023 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -23,18 +23,23 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"k8s.io/utils/clock"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1beta1 "k8s.io/api/scheduling/v1beta1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -56,7 +61,7 @@ var apiGVStr = jobset.GroupVersion.String()
 type JobSetReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	Record record.EventRecorder
+	Record events.EventRecorder
 	clock  clock.Clock
 }
 
@@ -91,17 +96,20 @@ type eventParams struct {
 	eventMessage string
 }
 
-func NewJobSetReconciler(client client.Client, scheme *runtime.Scheme, record record.EventRecorder) *JobSetReconciler {
+func NewJobSetReconciler(client client.Client, scheme *runtime.Scheme, record events.EventRecorder) *JobSetReconciler {
 	return &JobSetReconciler{Client: client, Scheme: scheme, Record: record, clock: clock.RealClock{}}
 }
 
 //+kubebuilder:rbac:groups="",resources=events,verbs=create;watch;update;patch
+//+kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;watch;update;patch
 //+kubebuilder:rbac:groups=jobset.x-k8s.io,resources=jobsets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=jobset.x-k8s.io,resources=jobsets/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=jobset.x-k8s.io,resources=jobsets/finalizers,verbs=update
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=batch,resources=jobs/status,verbs=get;patch;update
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=scheduling.k8s.io,resources=workloads,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=scheduling.k8s.io,resources=podgroups,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -128,16 +136,13 @@ func (r *JobSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return result, err
 	}
 
-	if err := r.updateJobSetStatus(ctx, &js, &updateStatusOpts); apierrors.IsConflict(err) {
-		return ctrl.Result{Requeue: true}, nil
-	}
 	// At the end of this Reconcile attempt, do one API call to persist all the JobSet status changes.
-	return ctrl.Result{RequeueAfter: result.RequeueAfter}, err
+	return ctrl.Result{RequeueAfter: result.RequeueAfter}, r.updateJobSetStatus(ctx, &js, &updateStatusOpts)
 }
 
 // reconcile is the internal method containing the core JobSet reconciliation logic.
 func (r *JobSetReconciler) reconcile(ctx context.Context, js *jobset.JobSet, updateStatusOpts *statusUpdateOpts) (ctrl.Result, error) {
-	log := ctrl.LoggerFrom(ctx).WithValues("jobset", klog.KObj(js))
+	log := ctrl.LoggerFrom(ctx).WithValues("jobset", klog.KObj(js), "jobSetUID", js.UID)
 	ctx = ctrl.LoggerInto(ctx, log)
 
 	// Check the controller configured for the JobSet.
@@ -145,6 +150,21 @@ func (r *JobSetReconciler) reconcile(ctx context.Context, js *jobset.JobSet, upd
 	// for why a JobSet would not be controlled by the default JobSet controller.
 	if manager := managedByExternalController(js); manager != nil {
 		log.V(5).Info("Skipping JobSet managed by a different controller", "managed-by", manager)
+		// The built-in controller does not manage child Jobs or status for externally
+		// managed JobSets. It still honors the TTL policy so that, once the external
+		// controller has written a terminal condition and the configured TTL expires,
+		// the JobSet CR is cleaned up. A JobSet without a TTL keeps the current
+		// behavior of being retained indefinitely.
+		if jobSetFinished(js) {
+			requeueAfter, err := executeTTLAfterFinishedPolicy(ctx, r.Client, r.clock, js)
+			if err != nil {
+				log.Error(err, "executing ttl after finished policy for externally managed jobset")
+				return ctrl.Result{}, err
+			}
+			if requeueAfter > 0 {
+				return ctrl.Result{RequeueAfter: requeueAfter}, nil
+			}
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -161,11 +181,18 @@ func (r *JobSetReconciler) reconcile(ctx context.Context, js *jobset.JobSet, upd
 	rjobStatuses := r.calculateReplicatedJobStatuses(ctx, js, ownedJobs)
 	updateReplicatedJobsStatuses(js, rjobStatuses, updateStatusOpts)
 
-	// If JobSet is already completed or failed, clean up active child jobs and requeue if TTLSecondsAfterFinished is set.
+	// If JobSet is already completed or failed, clean up active child jobs,
+	// remove any scheduling objects, and requeue if TTLSecondsAfterFinished is set.
 	if jobSetFinished(js) {
 		if err := r.deleteJobs(ctx, ownedJobs.active); err != nil {
 			log.Error(err, "deleting jobs")
 			return ctrl.Result{}, err
+		}
+		if features.Enabled(features.JobSetWorkloadAwareSchedulingAPI) && js.Spec.Scheduling != nil {
+			if err := r.deleteSchedulingObjects(ctx, js); err != nil {
+				log.Error(err, "deleting scheduling objects for finished JobSet")
+				return ctrl.Result{}, err
+			}
 		}
 		requeueAfter, err := executeTTLAfterFinishedPolicy(ctx, r.Client, r.clock, js)
 		if err != nil {
@@ -184,16 +211,57 @@ func (r *JobSetReconciler) reconcile(ctx context.Context, js *jobset.JobSet, upd
 		return ctrl.Result{}, err
 	}
 
-	// If any jobs have failed, execute the JobSet failure policy (if any).
-	if len(ownedJobs.failed) > 0 {
-		if err := executeFailurePolicy(ctx, js, ownedJobs, updateStatusOpts); err != nil {
-			log.Error(err, "executing failure policy")
+	if !jobSetSuspended(js) && allJobsReady(js, rjobStatuses) {
+		setRestartingConditionFalse(js, constants.RestartingJobSetReasonJobsReady, constants.RestartingJobSetReasonJobsReadyMessage, updateStatusOpts)
+	}
+
+	// Maintain .status.startTime (the JobSet active-start time and the anchor for
+	// spec.activeDeadlineSeconds). Self-gated: while the feature gate is off it clears
+	// any existing startTime, so a JobSet carries no active-deadline status side
+	// effects when disabled and a stale timestamp can't be enforced on re-enable.
+	r.syncActiveDeadlineStartTime(js, updateStatusOpts)
+
+	// deadlineRequeueAfter wakes the controller exactly at the active deadline.
+	// It stays 0 (no extra requeue) unless the feature is enabled and armed.
+	var deadlineRequeueAfter time.Duration
+
+	// Decide policy ordering from a pure, side-effect-free check so nothing reorders
+	// until the deadline has actually expired. Only an armed, expired deadline flips
+	// to the success -> deadline ordering; every other case (gate off, no deadline,
+	// or a live deadline) keeps the original failure -> success ordering, so merely
+	// setting a not-yet-expired deadline never changes the terminal outcome.
+	deadlineArmed, deadlineRemaining := r.activeDeadlineRemaining(js)
+	if deadlineArmed && deadlineRemaining <= 0 {
+		// Success still beats an expired deadline, so a completed JobSet wins.
+		if len(ownedJobs.successful) > 0 {
+			if completed := executeSuccessPolicy(js, ownedJobs, updateStatusOpts); completed {
+				return ctrl.Result{}, nil
+			}
+		}
+		// Otherwise fail with DeadlineExceeded (deleting active Jobs first) instead of
+		// running the failure policy, which could restart and reset the deadline.
+		if err := r.failJobSetOnActiveDeadline(ctx, js, ownedJobs, updateStatusOpts); err != nil {
+			log.Error(err, "failing JobSet on active deadline")
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
+	// Armed but not expired: requeue to wake exactly at expiry.
+	deadlineRequeueAfter = deadlineRemaining
 
-	// If any jobs have succeeded, execute the JobSet success policy.
+	// Original failure -> success ordering, unchanged for JobSets that do not use the
+	// feature and for deadline JobSets that have not yet expired.
+	if len(ownedJobs.failed) > 0 {
+		restartsBefore := js.Status.Restarts
+		if err := executeFailurePolicy(ctx, js, ownedJobs, updateStatusOpts); err != nil {
+			log.Error(err, "executing failure policy")
+			return ctrl.Result{}, err
+		}
+		// A global restart (Status.Restarts bumped) begins a fresh run, so reset the
+		// active-deadline timer. Self-gated: a no-op while the feature gate is off.
+		r.resetStartTimeOnGlobalRestart(js, restartsBefore, updateStatusOpts)
+		return ctrl.Result{}, nil
+	}
 	if len(ownedJobs.successful) > 0 {
 		if completed := executeSuccessPolicy(js, ownedJobs, updateStatusOpts); completed {
 			return ctrl.Result{}, nil
@@ -212,6 +280,69 @@ func (r *JobSetReconciler) reconcile(ctx context.Context, js *jobset.JobSet, upd
 			log.Error(err, "reconciling persistent volume claim policies")
 			return ctrl.Result{}, err
 		}
+	}
+
+	// Reconcile Workload-Aware Scheduling objects if scheduling is configured.
+	// When the JobSet is suspended, delete any existing scheduling objects so that
+	// the scheduler releases all resource claims. They are recreated on resume.
+	if features.Enabled(features.JobSetWorkloadAwareSchedulingAPI) && js.Spec.Scheduling != nil {
+		if jobSetSuspended(js) {
+			if err := r.deleteSchedulingObjects(ctx, js); err != nil {
+				log.Error(err, "deleting scheduling objects for suspended JobSet")
+				r.Record.Eventf(js, nil, corev1.EventTypeWarning, constants.SchedulingObjectsReconcileFailedReason, "Reconciling", err.Error())
+				return ctrl.Result{}, err
+			}
+		} else {
+			if err := r.reconcileSchedulingObjects(ctx, js); err != nil {
+				log.Error(err, "reconciling scheduling objects")
+				// Surface the failure on the JobSet so it is visible in
+				// `kubectl describe jobset`; otherwise the blocked Job creation is
+				// only logged in the controller.
+				r.Record.Eventf(js, nil, corev1.EventTypeWarning, constants.SchedulingObjectsReconcileFailedReason, "Reconciling", err.Error())
+				return ctrl.Result{}, err
+			}
+			// On spec drift, reconcileSchedulingObjects deletes the stale scheduling
+			// objects and relies on the owned-object watch to requeue a reconcile that
+			// recreates them. Don't create child Jobs until the Workload exists again,
+			// or the Jobs would reference PodGroups that no longer exist.
+			ready, err := r.schedulingObjectsReady(ctx, js)
+			if err != nil {
+				log.Error(err, "checking scheduling objects readiness")
+				r.Record.Eventf(js, nil, corev1.EventTypeWarning, constants.SchedulingObjectsReconcileFailedReason, "Reconciling", err.Error())
+				return ctrl.Result{}, err
+			}
+			if !ready {
+				return ctrl.Result{}, nil
+			}
+		}
+	}
+
+	// Scheduling is mutable while a JobSet is suspended, but Job pod templates
+	// are immutable. If the resumed Jobs still reference the previous scheduling
+	// configuration, delete them now so the next reconciliation recreates them
+	// with the new Workload/PodGroup mapping.
+	if features.Enabled(features.JobSetWorkloadAwareSchedulingAPI) && js.Spec.Scheduling != nil &&
+		!jobSetSuspended(js) && schedulingJobsNeedRecreation(js, ownedJobs.active) {
+		if err := r.deleteJobs(ctx, ownedJobs.active); err != nil {
+			log.Error(err, "deleting jobs with stale scheduling configuration")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Opportunistically patch existing active jobs for pod-level scaling
+	if features.Enabled(features.ElasticJobSet) {
+		if err := r.syncJobScaling(ctx, js, ownedJobs.active); err != nil {
+			log.Error(err, "syncing job scaling")
+			return ctrl.Result{}, err
+		}
+	}
+
+	if err := r.syncExecutionAttempts(ctx, js, ownedJobs, updateStatusOpts); err != nil {
+		if !apierrors.IsConflict(err) {
+			log.Error(err, "syncing execution attempts")
+		}
+		return ctrl.Result{}, err
 	}
 
 	// If job has not failed or succeeded, reconcile the state of the replicatedJobs.
@@ -250,7 +381,10 @@ func (r *JobSetReconciler) reconcile(ctx context.Context, js *jobset.JobSet, upd
 		}
 	}
 
-	return ctrl.Result{}, nil
+	// Requeue at the active deadline so a wedged JobSet (which produces no child
+	// events) is still failed at expiry. deadlineRequeueAfter is 0 when the deadline
+	// is unset, disabled, or the JobSet is suspended, which leaves behavior unchanged.
+	return ctrl.Result{RequeueAfter: deadlineRequeueAfter}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -259,6 +393,13 @@ func (r *JobSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&jobset.JobSet{}).
 		Owns(&batchv1.Job{}).
 		Owns(&corev1.Service{})
+
+	// Watch scheduling resources if WAS feature is enabled.
+	if features.Enabled(features.JobSetWorkloadAwareSchedulingAPI) {
+		controllerBuilder = controllerBuilder.
+			Owns(&schedulingv1beta1.Workload{}).
+			Owns(&schedulingv1beta1.PodGroup{})
+	}
 
 	// Watch Pods if in-place restart feature is enabled.
 	// This triggers the JobSet controller to reconcile when an associated Pod is created / modified / deleted.
@@ -295,7 +436,7 @@ func SetupJobSetIndexes(ctx context.Context, indexer client.FieldIndexer) error 
 		if owner.APIVersion != apiGVStr || owner.Kind != "JobSet" {
 			return nil
 		}
-		return []string{owner.Name}
+		return []string{string(owner.UID)}
 	})
 	if err != nil {
 		return err
@@ -332,7 +473,7 @@ func (r *JobSetReconciler) updateJobSetStatus(ctx context.Context, js *jobset.Jo
 		}
 		// If the status update was successful, emit any enqueued events.
 		for _, event := range updateStatusOpts.events {
-			r.Record.Eventf(event.object, event.eventType, event.eventReason, event.eventMessage)
+			r.Record.Eventf(event.object, nil, event.eventType, event.eventReason, "Reconciling", event.eventMessage)
 		}
 	}
 	return nil
@@ -345,11 +486,11 @@ func (r *JobSetReconciler) getChildJobs(ctx context.Context, js *jobset.JobSet) 
 
 	// Get all active jobs owned by JobSet.
 	var childJobList batchv1.JobList
-	if err := r.List(ctx, &childJobList, client.InNamespace(js.Namespace), client.MatchingFields{constants.JobsIndexByJobSetKey: js.Name}); err != nil {
+	if err := r.List(ctx, &childJobList, client.InNamespace(js.Namespace), client.MatchingFields{constants.JobsIndexByJobSetKey: string(js.UID)}); err != nil {
 		return nil, err
 	}
 
-	// Categorize each job into a bucket: active, successful, failed, or delete.
+	// Categorize each job into a bucket: active, successful, failed or previous.
 	ownedJobs := childJobs{}
 	for i, job := range childJobList.Items {
 		// Jobs with jobset.sigs.k8s.io/restart-attempt < restarts are marked for deletion.
@@ -366,8 +507,59 @@ func (r *JobSetReconciler) getChildJobs(ctx context.Context, js *jobset.JobSet) 
 			continue
 		}
 
-		// Jobs with jobset.sigs.k8s.io/restart-attempt == jobset.status.restarts are part of
-		// the current JobSet run, and marked either active, successful, or failed.
+		if features.Enabled(features.RestartJob) {
+			// A job is marked for deletion if its individual restart attempt is less than the target individual restart attempt.
+			replicatedJobName, ok := job.Labels[jobset.ReplicatedJobNameKey]
+			if !ok {
+				err := fmt.Errorf("missing label %s", jobset.ReplicatedJobNameKey)
+				log.Error(err, "")
+				ownedJobs.previous = append(ownedJobs.previous, &childJobList.Items[i])
+				return nil, err
+			}
+			jobIndexStr, ok := job.Labels[jobset.JobIndexKey]
+			if !ok {
+				err := fmt.Errorf("missing label %s", jobset.JobIndexKey)
+				log.Error(err, "")
+				ownedJobs.previous = append(ownedJobs.previous, &childJobList.Items[i])
+				return nil, err
+			}
+			jobIndex, err := strconv.Atoi(jobIndexStr)
+			if err != nil {
+				log.Error(err, fmt.Sprintf("invalid value for label %s, must be integer", jobset.JobIndexKey))
+				ownedJobs.previous = append(ownedJobs.previous, &childJobList.Items[i])
+				return nil, err
+			}
+			individualRestartsStr, ok := job.Labels[constants.JobRestartAttemptKey]
+			// If the label is missing, just log instead of deleting the Job for backward compatibility
+			// If this Job is ever recreated, it will have the label
+			if !ok {
+				log.Error(fmt.Errorf("missing label %s", constants.JobRestartAttemptKey), "")
+			} else {
+				individualRestarts, err := strconv.Atoi(individualRestartsStr)
+				if err != nil {
+					log.Error(err, fmt.Sprintf("invalid value for label %s, must be integer", constants.JobRestartAttemptKey))
+					ownedJobs.previous = append(ownedJobs.previous, &childJobList.Items[i])
+					return nil, err
+				}
+				allTargetIndividualRestarts := getJobRestarts(js, replicatedJobName)
+				if jobIndex >= len(allTargetIndividualRestarts) {
+					err := fmt.Errorf("job index %d is out of bounds for replicated job %s", jobIndex, replicatedJobName)
+					log.Error(err, "")
+					ownedJobs.previous = append(ownedJobs.previous, &childJobList.Items[i])
+					return nil, err
+				}
+				targetIndividualRestarts := allTargetIndividualRestarts[jobIndex]
+				if int32(individualRestarts) < targetIndividualRestarts {
+					log.V(2).Info("child Job marked for recreation as value of job restart attempt is less than target", "name", job.Name, constants.JobRestartAttemptKey, individualRestarts, "targetJobRestartAttempt", targetIndividualRestarts)
+					ownedJobs.previous = append(ownedJobs.previous, &childJobList.Items[i])
+					continue
+				}
+			}
+		}
+
+		// Jobs with job.labels['jobset.sigs.k8s.io/restart-attempt'] == jobset.status.restarts and
+		// job.labels['jobset.sigs.k8s.io/job-restart-attempt'] == jobset.status.replicatedJobsStatus[replicatedJobName].jobRestarts[jobIndex]
+		// are part of the current JobSet run, and marked either active, successful, or failed.
 		_, finishedType := JobFinished(&job)
 		switch finishedType {
 		case "": // active
@@ -415,6 +607,11 @@ func (r *JobSetReconciler) calculateReplicatedJobStatuses(ctx context.Context, j
 			log.Error(nil, fmt.Sprintf("job %s missing ReplicatedJobName label, can't update status", job.Name))
 			continue
 		}
+		replicatedJobName := job.Labels[jobset.ReplicatedJobNameKey]
+		if replicatedJobsReady[replicatedJobName] == nil {
+			log.Error(nil, fmt.Sprintf("job %s has ReplicatedJobName %s that is not part of JobSet", job.Name, replicatedJobName))
+			continue
+		}
 		ready := ptr.Deref(job.Status.Ready, 0)
 		// parallelism is always set as it is otherwise defaulted by k8s to 1
 		podsCount := *(job.Spec.Parallelism)
@@ -422,37 +619,74 @@ func (r *JobSetReconciler) calculateReplicatedJobStatuses(ctx context.Context, j
 			podsCount = *job.Spec.Completions
 		}
 		if job.Status.Succeeded+ready >= podsCount {
-			replicatedJobsReady[job.Labels[jobset.ReplicatedJobNameKey]]["ready"]++
+			replicatedJobsReady[replicatedJobName]["ready"]++
 		}
 		if job.Status.Active > 0 {
-			replicatedJobsReady[job.Labels[jobset.ReplicatedJobNameKey]]["active"]++
+			replicatedJobsReady[replicatedJobName]["active"]++
 		}
 		if jobSuspended(job) {
-			replicatedJobsReady[job.Labels[jobset.ReplicatedJobNameKey]]["suspended"]++
+			replicatedJobsReady[replicatedJobName]["suspended"]++
 		}
 	}
 
 	// Calculate succeededJobs
 	for _, job := range jobs.successful {
-		replicatedJobsReady[job.Labels[jobset.ReplicatedJobNameKey]]["succeeded"]++
+		if job.Labels == nil || job.Labels[jobset.ReplicatedJobNameKey] == "" {
+			log.Error(nil, fmt.Sprintf("job %s missing ReplicatedJobName label, can't update status", job.Name))
+			continue
+		}
+		replicatedJobName := job.Labels[jobset.ReplicatedJobNameKey]
+		if replicatedJobsReady[replicatedJobName] == nil {
+			log.Error(nil, fmt.Sprintf("job %s has ReplicatedJobName %s that is not part of JobSet", job.Name, replicatedJobName))
+			continue
+		}
+		replicatedJobsReady[replicatedJobName]["succeeded"]++
 	}
 
+	// Calculate failedJobs
 	for _, job := range jobs.failed {
-		replicatedJobsReady[job.Labels[jobset.ReplicatedJobNameKey]]["failed"]++
+		if job.Labels == nil || job.Labels[jobset.ReplicatedJobNameKey] == "" {
+			log.Error(nil, fmt.Sprintf("job %s missing ReplicatedJobName label, can't update status", job.Name))
+			continue
+		}
+		replicatedJobName := job.Labels[jobset.ReplicatedJobNameKey]
+		if replicatedJobsReady[replicatedJobName] == nil {
+			log.Error(nil, fmt.Sprintf("job %s has ReplicatedJobName %s that is not part of JobSet", job.Name, replicatedJobName))
+			continue
+		}
+		replicatedJobsReady[replicatedJobName]["failed"]++
 	}
 
 	// Calculate ReplicatedJobsStatus
 	var rjStatus []jobset.ReplicatedJobStatus
 	for name, status := range replicatedJobsReady {
-		rjStatus = append(rjStatus, jobset.ReplicatedJobStatus{
+		rjs := jobset.ReplicatedJobStatus{
 			Name:      name,
 			Ready:     status["ready"],
 			Succeeded: status["succeeded"],
 			Failed:    status["failed"],
 			Active:    status["active"],
 			Suspended: status["suspended"],
-		})
+		}
+
+		if features.Enabled(features.RestartJob) {
+			// Preserve existing JobRestarts and JobRestartsCountTowardsMax
+			// They are possibly changed in the failure policy code later
+			var jobRestarts, jobRestartsCountTowardsMax []int32
+			for _, existing := range js.Status.ReplicatedJobsStatus {
+				if existing.Name == name {
+					jobRestarts = existing.JobRestarts
+					jobRestartsCountTowardsMax = existing.JobRestartsCountTowardsMax
+					break
+				}
+			}
+			rjs.JobRestarts = jobRestarts
+			rjs.JobRestartsCountTowardsMax = jobRestartsCountTowardsMax
+		}
+
+		rjStatus = append(rjStatus, rjs)
 	}
+
 	return rjStatus
 }
 
@@ -466,6 +700,100 @@ func (r *JobSetReconciler) suspendJobs(ctx context.Context, js *jobset.JobSet, a
 		}
 	}
 	setJobSetSuspendedCondition(js, updateStatusOpts)
+	return nil
+}
+
+// syncExecutionAttempts handles initial setup and resume increments for ExecutionAttempts.
+func (r *JobSetReconciler) syncExecutionAttempts(ctx context.Context, js *jobset.JobSet, ownedJobs *childJobs, updateStatusOpts *statusUpdateOpts) error {
+	if !features.Enabled(features.ExecutionAttemptsTracking) {
+		return nil
+	}
+
+	// jobSetSuspended(js) checks the current desired state (from Spec.Suspend),
+	// while previouslySuspended checks if the JobSet was previously observed as suspended in status conditions.
+	// This distinction detects the Suspended -> Active (resume) transition.
+	previouslySuspended := apimeta.IsStatusConditionTrue(js.Status.Conditions, string(jobset.JobSetSuspended))
+	isSuspended := jobSetSuspended(js)
+
+	// If the JobSet is currently suspended, do not initialize ExecutionAttempts yet
+	// (allows distinguishing between JobSets created suspended vs suspended after running).
+	if isSuspended {
+		return nil
+	}
+
+	// Not a resume transition (normal running reconcile or newly created unsuspended JobSet).
+	if !previouslySuspended {
+		if js.Status.ExecutionAttempts == nil {
+			js.Status.ExecutionAttempts = ptr.To(js.Status.Restarts)
+			updateStatusOpts.shouldUpdate = true
+		}
+		return nil
+	}
+
+	// The JobSet is transitioning from suspended to active (resuming).
+	var updated bool
+	// First resume after upgrade or first resume of a JobSet created suspended.
+	if js.Status.ExecutionAttempts == nil {
+		attempts := js.Status.Restarts
+		if attempts > 0 {
+			attempts++
+		}
+		js.Status.ExecutionAttempts = ptr.To(attempts)
+		updated = true
+	} else {
+		// Determine whether ExecutionAttempts has already been incremented for this resume transition.
+		// If any child job is already unsuspended, or if Status.ExecutionAttempts is already greater
+		// than the attempt recorded on suspended child jobs, it was already incremented (e.g. on a reconcile retry).
+		shouldIncrement := true
+		if len(ownedJobs.active) > 0 {
+			for _, job := range ownedJobs.active {
+				if !jobSuspended(job) {
+					shouldIncrement = false
+					break
+				}
+				val, hasAnnotation := job.Annotations[constants.ExecutionAttemptsKey]
+				if !hasAnnotation {
+					// Child job was created suspended and has never executed with ExecutionAttempts.
+					// Since Status.ExecutionAttempts is already non-nil, it was already initialized
+					// for this resume transition in a prior reconcile attempt.
+					shouldIncrement = false
+					break
+				} else if attempt, err := strconv.Atoi(val); err == nil {
+					if *js.Status.ExecutionAttempts > int32(attempt) {
+						// Status was already incremented and persisted in a prior reconcile attempt.
+						shouldIncrement = false
+						break
+					}
+				}
+			}
+		} else if len(ownedJobs.successful) > 0 || len(ownedJobs.failed) > 0 {
+			// No active jobs exist (e.g. InOrder startup suspended between stages).
+			// Inspect completed jobs to check if Status.ExecutionAttempts was already incremented in a prior reconcile attempt.
+			for _, job := range slices.Concat(ownedJobs.successful, ownedJobs.failed) {
+				val, hasAnnotation := job.Annotations[constants.ExecutionAttemptsKey]
+				if hasAnnotation {
+					if attempt, err := strconv.Atoi(val); err == nil {
+						if *js.Status.ExecutionAttempts > int32(attempt) {
+							shouldIncrement = false
+							break
+						}
+					}
+				}
+			}
+		} else {
+			// No active, successful, or failed jobs exist (e.g. retry of initially suspended JobSet before jobs were created).
+			shouldIncrement = false
+		}
+
+		if shouldIncrement {
+			js.Status.ExecutionAttempts = ptr.To(*js.Status.ExecutionAttempts + 1)
+			updated = true
+		}
+	}
+
+	if updated {
+		return r.Status().Update(ctx, js)
+	}
 	return nil
 }
 
@@ -512,7 +840,7 @@ func (r *JobSetReconciler) resumeJobsIfNecessary(ctx context.Context, js *jobset
 			if !jobSuspended(job) {
 				continue
 			}
-			if err := r.resumeJob(ctx, job, replicatedJobTemplateMap); err != nil {
+			if err := r.resumeJob(ctx, js, job, replicatedJobTemplateMap); err != nil {
 				return err
 			}
 		}
@@ -530,7 +858,7 @@ func (r *JobSetReconciler) resumeJobsIfNecessary(ctx context.Context, js *jobset
 	return nil
 }
 
-func (r *JobSetReconciler) resumeJob(ctx context.Context, job *batchv1.Job, replicatedJobTemplateMap map[string]corev1.PodTemplateSpec) error {
+func (r *JobSetReconciler) resumeJob(ctx context.Context, js *jobset.JobSet, job *batchv1.Job, replicatedJobTemplateMap map[string]corev1.PodTemplateSpec) error {
 	log := ctrl.LoggerFrom(ctx)
 	// Kubernetes validates that a job template is immutable
 	// so if the job has started i.e., startTime != nil), we must set it to nil first.
@@ -571,6 +899,19 @@ func (r *JobSetReconciler) resumeJob(ctx context.Context, job *batchv1.Job, repl
 			job.Spec.Template.Spec.SchedulingGates,
 			replicatedJobPodTemplate.Spec.SchedulingGates,
 		)
+
+		if features.Enabled(features.ExecutionAttemptsTracking) {
+			attemptsStr := strconv.Itoa(int(ptr.Deref(js.Status.ExecutionAttempts, 0)))
+			if job.Spec.Template.Annotations == nil {
+				job.Spec.Template.Annotations = make(map[string]string)
+			}
+			job.Spec.Template.Annotations[constants.ExecutionAttemptsKey] = attemptsStr
+
+			if job.Annotations == nil {
+				job.Annotations = make(map[string]string)
+			}
+			job.Annotations[constants.ExecutionAttemptsKey] = attemptsStr
+		}
 	} else {
 		log.Error(nil, "job missing ReplicatedJobName label")
 	}
@@ -605,7 +946,7 @@ func (r *JobSetReconciler) reconcileReplicatedJobs(ctx context.Context, js *jobs
 		// Create jobs as necessary.
 		if err := r.createJobs(ctx, js, jobs); err != nil {
 			log.Error(err, "creating jobs")
-			r.Record.Eventf(js, corev1.EventTypeWarning, constants.JobCreationFailedReason, err.Error())
+			r.Record.Eventf(js, nil, corev1.EventTypeWarning, constants.JobCreationFailedReason, "Reconciling", err.Error())
 			return err
 		}
 
@@ -633,7 +974,7 @@ func (r *JobSetReconciler) createJobs(ctx context.Context, js *jobset.JobSet, jo
 	workqueue.ParallelizeUntil(ctx, constants.MaxParallelism, len(jobs), func(i int) {
 		job := jobs[i]
 
-		// Set jobset controller as owner of the job for garbage collection and reconcilation.
+		// Set jobset controller as owner of the job for garbage collection and reconciliation.
 		if err := ctrl.SetControllerReference(js, job, r.Scheme); err != nil {
 			lock.Lock()
 			defer lock.Unlock()
@@ -682,6 +1023,49 @@ func (r *JobSetReconciler) deleteJobs(ctx context.Context, jobsForDeletion []*ba
 
 // TODO: look into adopting service and updating the selector
 // if it is not matching the job selector.
+// headlessSvcPorts collects the unique container ports declared across all
+// replicatedJobs' pod templates, so service meshes like Istio (which only
+// route to ports declared on the Service) can reach headless service pods.
+// Ports with a zero container port are skipped, an empty protocol defaults to
+// TCP, and entries are deduplicated by port number and protocol. If no
+// container declares a port, this returns nil and the service is created
+// without ports, preserving the previous behavior.
+func headlessSvcPorts(js *jobset.JobSet) []corev1.ServicePort {
+	seen := make(map[string]bool)
+	var ports []corev1.ServicePort
+	for i := range js.Spec.ReplicatedJobs {
+		podSpec := js.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec
+		for c := range podSpec.Containers {
+			for _, p := range podSpec.Containers[c].Ports {
+				if p.ContainerPort == 0 {
+					continue
+				}
+				proto := p.Protocol
+				if proto == "" {
+					proto = corev1.ProtocolTCP
+				}
+				key := fmt.Sprintf("%d/%s", p.ContainerPort, proto)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				ports = append(ports, corev1.ServicePort{
+					// Name is <transport>-<port> (e.g. tcp-8080) to give each port a
+					// unique, deterministic identifier within the 15 character limit
+					// Kubernetes enforces on port names. This is a naming scheme only;
+					// meshes select L7 protocols via the name prefix (http-/grpc-/...)
+					// or appProtocol, which this does not set.
+					Name:       fmt.Sprintf("%s-%d", strings.ToLower(string(proto)), p.ContainerPort),
+					Port:       p.ContainerPort,
+					TargetPort: intstr.FromInt32(p.ContainerPort),
+					Protocol:   proto,
+				})
+			}
+		}
+	}
+	return ports
+}
+
 func (r *JobSetReconciler) createHeadlessSvcIfNecessary(ctx context.Context, js *jobset.JobSet) error {
 	log := ctrl.LoggerFrom(ctx)
 
@@ -711,22 +1095,108 @@ func (r *JobSetReconciler) createHeadlessSvcIfNecessary(ctx context.Context, js 
 					jobset.JobSetNameKey: js.Name,
 				},
 				PublishNotReadyAddresses: ptr.Deref(js.Spec.Network.PublishNotReadyAddresses, true),
+				Ports:                    headlessSvcPorts(js),
 			},
 		}
 
-		// Set controller owner reference for garbage collection and reconcilation.
+		// Set controller owner reference for garbage collection and reconciliation.
 		if err := ctrl.SetControllerReference(js, &headlessSvc, r.Scheme); err != nil {
 			return err
 		}
 
 		// Create headless service.
 		if err := r.Create(ctx, &headlessSvc); err != nil {
-			r.Record.Eventf(js, corev1.EventTypeWarning, constants.HeadlessServiceCreationFailedReason, err.Error())
+			r.Record.Eventf(js, nil, corev1.EventTypeWarning, constants.HeadlessServiceCreationFailedReason, "Reconciling", err.Error())
 			return err
 		}
 		log.V(2).Info("successfully created headless service", "service", klog.KObj(&headlessSvc))
+		return nil
+	}
+
+	// Service already exists. If we own it, keep its ports in sync with the
+	// declared container ports (e.g. after an upgrade that adds port propagation
+	// to a headless service created without ports).
+	desiredPorts := headlessSvcPorts(js)
+	if metav1.IsControlledBy(&headlessSvc, js) && !apiequality.Semantic.DeepEqual(headlessSvc.Spec.Ports, desiredPorts) {
+		headlessSvc.Spec.Ports = desiredPorts
+		if err := r.Update(ctx, &headlessSvc); err != nil {
+			return err
+		}
+		log.V(2).Info("updated headless service ports", "service", klog.KObj(&headlessSvc))
 	}
 	return nil
+}
+
+// syncJobScaling applies in-place updates to the parallelism and completions of existing active child jobs
+// to match the desired state in the JobSet template (Elastic Indexed Jobs).
+func (r *JobSetReconciler) syncJobScaling(ctx context.Context, js *jobset.JobSet, activeJobs []*batchv1.Job) error {
+
+	if !features.Enabled(features.ElasticJobSet) {
+		return nil
+	}
+
+	log := ctrl.LoggerFrom(ctx)
+	var finalErrs []error
+
+	// Lookup map for the desired scaling configurations
+	type scalingConfig struct {
+		parallelism *int32
+		completions *int32
+	}
+	desiredScaling := make(map[string]scalingConfig)
+	for _, rjob := range js.Spec.ReplicatedJobs {
+		desiredScaling[rjob.Name] = scalingConfig{
+			parallelism: rjob.Template.Spec.Parallelism,
+			completions: rjob.Template.Spec.Completions,
+		}
+	}
+
+	// Iterate through active jobs and patch them if their scaling configuration is out of sync
+	for _, job := range activeJobs {
+		rjobName, ok := job.Labels[jobset.ReplicatedJobNameKey]
+		if !ok {
+			continue // Skip if label is missing
+		}
+
+		desired, exists := desiredScaling[rjobName]
+		if !exists {
+			continue
+		}
+
+		if jobScalingNeedsPatch(job, desired.parallelism, desired.completions) {
+			patch := client.MergeFrom(job.DeepCopy())
+			job.Spec.Parallelism = desired.parallelism
+			job.Spec.Completions = desired.completions
+
+			log.V(2).Info("Patching child Job for horizontal pod scaling",
+				"job", klog.KObj(job),
+				"parallelism", ptr.Deref(desired.parallelism, 0),
+				"completions", ptr.Deref(desired.completions, 0))
+
+			if err := r.Patch(ctx, job, patch); err != nil {
+				finalErrs = append(finalErrs, fmt.Errorf("failed to patch job %q for scaling: %w", job.Name, err))
+			}
+		}
+	}
+
+	return errors.Join(finalErrs...)
+}
+
+// jobScalingNeedsPatch evaluates whether a job's parallelism or completions
+// are out of sync with the desired state. It also guarantees we only trigger
+// a patch if the desired state is valid for Elastic Indexed Jobs (P == C).
+func jobScalingNeedsPatch(job *batchv1.Job, desiredParallelism, desiredCompletions *int32) bool {
+	// Parallelism and Completions should be equal for elastic scaling.
+	// If the desired state is out of sync with itself, it's an invalid configuration.
+	if !ptr.Equal(desiredParallelism, desiredCompletions) {
+		return false
+	}
+
+	// 2. Check if the Job has drifted from the desired state.
+	parallelismChanged := !ptr.Equal(job.Spec.Parallelism, desiredParallelism)
+	completionsChanged := !ptr.Equal(job.Spec.Completions, desiredCompletions)
+
+	return parallelismChanged || completionsChanged
 }
 
 // executeSuccessPolicy checks the completed jobs against the jobset success policy
@@ -799,6 +1269,23 @@ func constructJob(js *jobset.JobSet, rjob *jobset.ReplicatedJob, jobIdx int) *ba
 		addVolumes(job, js)
 	}
 
+	// If scheduling is configured, annotate child jobs with downward mapping annotations
+	// and inject schedulingGroup into the pod template so pods join the correct PodGroup.
+	if features.Enabled(features.JobSetWorkloadAwareSchedulingAPI) && js.Spec.Scheduling != nil {
+		if job.Annotations == nil {
+			job.Annotations = make(map[string]string)
+		}
+		templateName := schedulingGroupTemplateName(js, rjob.Name, jobIdx)
+		job.Annotations[SchedulingGroupTemplateNameKey] = templateName
+		pgName := schedulingPodGroupName(js, templateName)
+
+		// Inject schedulingGroup into the pod template so that pods are
+		// associated with the PodGroup by the WAS scheduler.
+		job.Spec.Template.Spec.SchedulingGroup = &corev1.PodSchedulingGroup{
+			PodGroupName: ptr.To(pgName),
+		}
+	}
+
 	return job
 }
 
@@ -846,6 +1333,9 @@ func labelAndAnnotateObject(obj metav1.Object, js *jobset.JobSet, rjob *jobset.R
 	labels[jobset.JobSetUIDKey] = string(js.GetUID())
 	labels[jobset.ReplicatedJobNameKey] = rjob.Name
 	labels[constants.RestartsKey] = strconv.Itoa(int(js.Status.Restarts))
+	if features.Enabled(features.RestartJob) {
+		labels[constants.JobRestartAttemptKey] = strconv.Itoa(int(getJobRestarts(js, rjob.Name)[jobIdx]))
+	}
 	labels[jobset.ReplicatedJobReplicas] = strconv.Itoa(int(rjob.Replicas))
 	labels[jobset.GlobalReplicasKey] = globalReplicas(js)
 	labels[jobset.JobIndexKey] = strconv.Itoa(jobIdx)
@@ -861,6 +1351,15 @@ func labelAndAnnotateObject(obj metav1.Object, js *jobset.JobSet, rjob *jobset.R
 	annotations[jobset.JobSetUIDKey] = string(js.GetUID())
 	annotations[jobset.ReplicatedJobNameKey] = rjob.Name
 	annotations[constants.RestartsKey] = strconv.Itoa(int(js.Status.Restarts))
+	if features.Enabled(features.RestartJob) {
+		annotations[constants.JobRestartAttemptKey] = strconv.Itoa(int(getJobRestarts(js, rjob.Name)[jobIdx]))
+	}
+	if features.Enabled(features.ExecutionAttemptsTracking) {
+		if js.Status.ExecutionAttempts != nil {
+			annotations[constants.ExecutionAttemptsKey] = strconv.Itoa(int(*js.Status.ExecutionAttempts))
+		}
+	}
+
 	annotations[jobset.ReplicatedJobReplicas] = strconv.Itoa(int(rjob.Replicas))
 	annotations[jobset.GlobalReplicasKey] = globalReplicas(js)
 	annotations[jobset.JobIndexKey] = strconv.Itoa(jobIdx)
@@ -954,12 +1453,24 @@ func jobSetFinished(js *jobset.JobSet) bool {
 	return false
 }
 
+func allJobsReady(js *jobset.JobSet, rjobStatuses []jobset.ReplicatedJobStatus) bool {
+	totalReplicas := 0
+	readyReplicas := 0
+	for _, rjSpec := range js.Spec.ReplicatedJobs {
+		totalReplicas += int(rjSpec.Replicas)
+	}
+	for _, rjStatus := range rjobStatuses {
+		readyReplicas += int(rjStatus.Ready + rjStatus.Succeeded)
+	}
+	return totalReplicas == readyReplicas
+}
+
 func jobSetMarkedForDeletion(js *jobset.JobSet) bool {
 	return js.DeletionTimestamp != nil
 }
 
 func dnsHostnamesEnabled(js *jobset.JobSet) bool {
-	return js.Spec.Network.EnableDNSHostnames != nil && *js.Spec.Network.EnableDNSHostnames
+	return js.Spec.Network != nil && js.Spec.Network.EnableDNSHostnames != nil && *js.Spec.Network.EnableDNSHostnames
 }
 
 func jobSetSuspended(js *jobset.JobSet) bool {
@@ -989,7 +1500,7 @@ func managedByExternalController(js *jobset.JobSet) *string {
 }
 
 // enqueueEvent appends a new k8s event to be emitted if and only after running the status
-// update functions in the updateStatusOpts, the status update API call suceeds.
+// update functions in the updateStatusOpts, the status update API call succeeds.
 func enqueueEvent(updateStatusOpts *statusUpdateOpts, event *eventParams) {
 	updateStatusOpts.events = append(updateStatusOpts.events, event)
 }
@@ -1049,9 +1560,12 @@ func updateCondition(js *jobset.JobSet, opts *conditionOpts) bool {
 			if newCond.Status != currCond.Status {
 				js.Status.Conditions[i] = newCond
 				shouldUpdate = true
+			} else if newCond.Reason != currCond.Reason || newCond.Message != currCond.Message {
+				newCond.LastTransitionTime = currCond.LastTransitionTime
+				js.Status.Conditions[i] = newCond
+				shouldUpdate = true
 			}
 
-			// If both are true or both are false, this is a duplicate condition, do nothing.
 			found = true
 		} else {
 			// If conditions are of different types, only perform an update if they are both true
@@ -1077,6 +1591,7 @@ func updateCondition(js *jobset.JobSet, opts *conditionOpts) bool {
 // setJobSetCompletedCondition sets a condition and terminal state on the JobSet status indicating it has completed.
 func setJobSetCompletedCondition(js *jobset.JobSet, updateStatusOpts *statusUpdateOpts) {
 	setCondition(js, makeCompletedConditionsOpts(), updateStatusOpts)
+	setRestartingConditionFalse(js, constants.RestartingJobSetReasonJobSetCompleted, constants.AllJobsCompletedMessage, updateStatusOpts)
 	js.Status.TerminalState = string(jobset.JobSetCompleted)
 	// Update the metrics
 	metrics.JobSetCompleted(js.Name, js.Namespace)
@@ -1085,12 +1600,26 @@ func setJobSetCompletedCondition(js *jobset.JobSet, updateStatusOpts *statusUpda
 // setJobSetSuspendedCondition sets a condition on the JobSet status indicating it is currently suspended.
 func setJobSetSuspendedCondition(js *jobset.JobSet, updateStatusOpts *statusUpdateOpts) {
 	setCondition(js, makeSuspendedConditionOpts(), updateStatusOpts)
+	setRestartingConditionFalse(js, constants.RestartingJobSetReasonJobSetSuspended, constants.JobSetSuspendedMessage, updateStatusOpts)
 }
 
 // setJobSetResumedCondition sets a condition on the JobSet status indicating it has been resumed.
 // This updates the "suspended" condition type from "true" to "false."
 func setJobSetResumedCondition(js *jobset.JobSet, updateStatusOpts *statusUpdateOpts) {
 	setCondition(js, makeResumedConditionOpts(), updateStatusOpts)
+}
+
+func setRestartingConditionFalse(js *jobset.JobSet, reason, message string, updateStatusOpts *statusUpdateOpts) {
+	condOpts := &conditionOpts{
+		eventType: corev1.EventTypeNormal,
+		condition: &metav1.Condition{
+			Type:    string(jobset.JobSetRestarting),
+			Status:  metav1.ConditionFalse,
+			Reason:  reason,
+			Message: message,
+		},
+	}
+	setCondition(js, condOpts, updateStatusOpts)
 }
 
 // completedConditionsOpts contains the options we use to generate the JobSet completed condition.

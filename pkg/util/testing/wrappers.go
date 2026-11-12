@@ -1,5 +1,5 @@
 /*
-Copyright 2023 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -58,6 +58,12 @@ func MakeJobSet(name, ns string) *JobSetWrapper {
 // Conditions sets the value of jobSet.status.conditions
 func (j *JobSetWrapper) Conditions(conditions []metav1.Condition) *JobSetWrapper {
 	j.Status.Conditions = conditions
+	return j
+}
+
+// SetExecutionAttempts sets the value of jobSet.status.executionAttempts
+func (j *JobSetWrapper) SetExecutionAttempts(attempts int32) *JobSetWrapper {
+	j.Status.ExecutionAttempts = ptr.To(attempts)
 	return j
 }
 
@@ -155,6 +161,18 @@ func (j *JobSetWrapper) EnableDNSHostnames(val bool) *JobSetWrapper {
 // PublishNotReadyAddresses sets the value of JobSet.Network.PublishNotReadyAddresses.
 func (j *JobSetWrapper) PublishNotReadyAddresses(val bool) *JobSetWrapper {
 	j.Spec.Network.PublishNotReadyAddresses = ptr.To(val)
+	return j
+}
+
+// ActiveDeadlineSeconds sets the value of JobSet.Spec.ActiveDeadlineSeconds
+func (j *JobSetWrapper) ActiveDeadlineSeconds(seconds int64) *JobSetWrapper {
+	j.Spec.ActiveDeadlineSeconds = &seconds
+	return j
+}
+
+// StartTime sets the value of JobSet.Status.StartTime
+func (j *JobSetWrapper) StartTime(t metav1.Time) *JobSetWrapper {
+	j.Status.StartTime = &t
 	return j
 }
 

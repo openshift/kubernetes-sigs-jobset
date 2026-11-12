@@ -1,5 +1,5 @@
 /*
-Copyright 2023 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -80,7 +80,7 @@ func TestReplicatedJobStarted(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "replicas 4; replicatedJobStatus mix of ready, failed and succeded",
+			name:     "replicas 4; replicatedJobStatus mix of ready, failed and succeeded",
 			replicas: 4,
 			replicatedJobStatus: &jobset.ReplicatedJobStatus{
 				Name:      "test",

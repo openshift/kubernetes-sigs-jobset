@@ -1,10 +1,7 @@
 # JobSet
 
-[![GoReport Widget]][GoReport Status]
 [![Latest Release](https://img.shields.io/github/v/release/kubernetes-sigs/jobset?include_prereleases)](https://github.com/kubernetes-sigs/jobset/releases/latest)
-
-[GoReport Widget]: https://goreportcard.com/badge/github.com/kubernetes-sigs/jobset
-[GoReport Status]: https://goreportcard.com/report/github.com/kubernetes-sigs/jobset
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/kubernetes-sigs/jobset)
 
 JobSet is a Kubernetes-native API for managing a group of [k8s Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) as a unit. It aims to offer a unified API for deploying HPC (e.g., MPI) and AI/ML training workloads (PyTorch, Jax, Tensorflow etc.) on Kubernetes.
 
@@ -57,7 +54,7 @@ efficiently and improve ML training goodput.
 To install the latest release of JobSet in your cluster, run the following command:
 
 ```shell
-kubectl apply --server-side -f https://github.com/kubernetes-sigs/jobset/releases/download/v0.11.0/manifests.yaml
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/jobset/releases/download/v0.13.0/manifests.yaml
 ```
 
 The controller runs in the `jobset-system` namespace.
@@ -72,6 +69,15 @@ Check out our [roadmap](https://github.com/orgs/kubernetes-sigs/projects/99/view
 
 See the [troubleshooting](https://jobset.sigs.k8s.io/docs/troubleshooting/) guide for help resolving common issues.
 
+
+## Talks and Presentations
+
+- KubeCon EU 2026: [WG-Batch Updates: What's New and What Is Next?](https://www.youtube.com/watch?v=H_dfPaDpHHQ) by @tenzen-y @kannon92
+- KubeCon Japan 2025: [WG-Batch Updates: What's New and What Is Next?](https://www.youtube.com/watch?v=tJQjBzfELpM) by @tenzen-y @mimowo
+- KubeCon NA 2024: [Democratizing AI Model Training on Kubernetes with Kubeflow TrainJob and JobSet](https://www.youtube.com/watch?v=Lgy4ir1AhYw) by @andreyvelich @tenzen-y
+- KubeCon EU 2024: [WG-Batch Updates: What's New and What Is Next?](https://www.youtube.com/watch?v=2D2QSzUnS0M) by @mimowo @tenzen-y
+- KubeCon NA 2023: [On-Demand Systems and Scaled Training Using the JobSet API](https://www.youtube.com/watch?v=cwiAW5TZsfo) by @ahg-g @vsoch
+- KubeCon NA 2023: [WG Batch: What's New and What Is Next?](https://www.youtube.com/watch?v=aWxuaEFSarU) by @mwielgus
 
 ## Community, discussion, contribution, and support
 

@@ -1,5 +1,5 @@
 {{- /*
-Copyright 2025 The Kubernetes authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -56,3 +56,4 @@ Create the name of the jobset validating webhook configuration.
 {{- define "jobset.webhook.validatingWebhookConfiguration.name" -}}
 jobset-validating-webhook-configuration
 {{- end -}}
+

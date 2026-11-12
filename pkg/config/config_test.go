@@ -1,5 +1,5 @@
 /*
-Copyright 2023 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ limitations under the License.
 package config
 
 import (
+	"crypto/tls"
 	"errors"
 	"io/fs"
 	"net"
@@ -24,6 +25,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -230,6 +232,7 @@ webhook:
 		cmpopts.IgnoreUnexported(webhook.DefaultServer{}),
 		cmpopts.IgnoreUnexported(ctrlcache.Options{}),
 		cmpopts.IgnoreUnexported(net.ListenConfig{}),
+		cmpopts.IgnoreUnexported(logr.Logger{}),
 		cmpopts.IgnoreFields(ctrl.Options{}, "Scheme", "Logger"),
 		cmpopts.IgnoreFields(ctrl.Options{}, "Controller", "Logger"),
 	}
@@ -592,6 +595,136 @@ func TestEncode(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.wantResult, gotMap); diff != "" {
 				t.Errorf("Unexpected result (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestTLSConfiguration(t *testing.T) {
+	testScheme := runtime.NewScheme()
+	err := configapi.AddToScheme(testScheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tmpDir := t.TempDir()
+
+	// Config with TLS settings
+	tlsConfig := filepath.Join(tmpDir, "tls-config.yaml")
+	if err := os.WriteFile(tlsConfig, []byte(`
+apiVersion: config.jobset.x-k8s.io/v1alpha1
+kind: Configuration
+health:
+  healthProbeBindAddress: :8081
+metrics:
+  bindAddress: :8443
+leaderElection:
+  leaderElect: true
+  resourceName: 6d4f6a47.jobset.x-k8s.io
+webhook:
+  port: 9443
+tls:
+  minVersion: VersionTLS12
+  cipherSuites:
+    - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+    - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+`), os.FileMode(0600)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Config with TLS 1.3 (no cipher suites)
+	tls13Config := filepath.Join(tmpDir, "tls13-config.yaml")
+	if err := os.WriteFile(tls13Config, []byte(`
+apiVersion: config.jobset.x-k8s.io/v1alpha1
+kind: Configuration
+health:
+  healthProbeBindAddress: :8081
+metrics:
+  bindAddress: :8443
+leaderElection:
+  leaderElect: true
+  resourceName: 6d4f6a47.jobset.x-k8s.io
+webhook:
+  port: 9443
+tls:
+  minVersion: VersionTLS13
+`), os.FileMode(0600)); err != nil {
+		t.Fatal(err)
+	}
+
+	testcases := []struct {
+		name               string
+		configFile         string
+		wantTLSOptsApplied bool
+		wantMinVersion     uint16
+		wantCipherSuiteSet bool
+	}{
+		{
+			name:               "TLS config",
+			configFile:         tlsConfig,
+			wantTLSOptsApplied: true,
+			wantMinVersion:     tls.VersionTLS12,
+			wantCipherSuiteSet: true,
+		},
+		{
+			name:               "TLS 1.3 config",
+			configFile:         tls13Config,
+			wantTLSOptsApplied: true,
+			wantMinVersion:     tls.VersionTLS13,
+			wantCipherSuiteSet: false,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			options, cfg, err := Load(testScheme, tc.configFile)
+			if err != nil {
+				t.Fatalf("Unexpected error: %s", err)
+			}
+
+			// Verify TLS config is in the parsed configuration
+			if cfg.TLS == nil {
+				t.Errorf("Expected TLS configuration to be present in config")
+				return
+			}
+
+			// Check webhook server TLS options
+			webhookServer := options.WebhookServer
+			if webhookServer == nil {
+				t.Errorf("Expected webhook server to be set")
+				return
+			}
+
+			defaultServer, ok := webhookServer.(*webhook.DefaultServer)
+			if !ok {
+				t.Errorf("Expected webhook server to be DefaultServer type")
+				return
+			}
+
+			// Verify TLSOpts is set correctly based on feature gate
+			if tc.wantTLSOptsApplied {
+				if len(defaultServer.Options.TLSOpts) == 0 {
+					t.Errorf("Expected TLSOpts to be set when feature gate is enabled")
+				} else {
+					// Verify the TLS options are correctly applied by invoking them
+					tlsConfig := &tls.Config{}
+					for _, opt := range defaultServer.Options.TLSOpts {
+						opt(tlsConfig)
+					}
+					if tlsConfig.MinVersion != tc.wantMinVersion {
+						t.Errorf("MinVersion = %v, want %v", tlsConfig.MinVersion, tc.wantMinVersion)
+					}
+					if tc.wantCipherSuiteSet && len(tlsConfig.CipherSuites) == 0 {
+						t.Errorf("Expected cipher suites to be set")
+					}
+					if !tc.wantCipherSuiteSet && len(tlsConfig.CipherSuites) != 0 {
+						t.Errorf("Expected cipher suites to not be set for TLS 1.3")
+					}
+				}
+			} else {
+				if len(defaultServer.Options.TLSOpts) != 0 {
+					t.Errorf("Expected TLSOpts to be empty when feature gate is disabled, got %d options", len(defaultServer.Options.TLSOpts))
+				}
 			}
 		})
 	}

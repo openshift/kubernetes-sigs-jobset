@@ -1,5 +1,5 @@
 /*
-Copyright 2023 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -26,13 +26,16 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1alpha3 "k8s.io/api/scheduling/v1alpha3"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
-	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apiserver/pkg/storage/names"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,6 +44,7 @@ import (
 	jobset "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 	"sigs.k8s.io/jobset/pkg/controllers"
 	"sigs.k8s.io/jobset/pkg/features"
+	jobsetutil "sigs.k8s.io/jobset/pkg/util"
 	"sigs.k8s.io/jobset/pkg/util/placement"
 )
 
@@ -68,6 +72,14 @@ const (
 	// Error message returned by JobSet validation if the network subdomain
 	// will be longer than 63 characters.
 	subdomainTooLongErrMsg = ".spec.network.subdomain is too long, must be less than 63 characters"
+
+	// maxReplicasPerReplicatedJob limits the number of replicas when using the RestartJob action.
+	// The limit is based on the 1024 MaxItems of the JobRestarts field in ReplicatedJobStatus.
+	// See api/jobset/v1alpha2/jobset_types.go for more details.
+	maxReplicasPerReplicatedJob = 1024
+
+	// Default rule name for FailurePolicy
+	defaultRuleNameFmt = "failurePolicyRule%v"
 )
 
 // validOnJobFailureReasons stores supported values of the reason field of the condition of
@@ -83,38 +95,23 @@ var validOnJobFailureReasons = []string{
 
 //+kubebuilder:webhook:path=/mutate-jobset-x-k8s-io-v1alpha2-jobset,mutating=true,failurePolicy=fail,sideEffects=None,groups=jobset.x-k8s.io,resources=jobsets,verbs=create,versions=v1alpha2,name=mjobset.kb.io,admissionReviewVersions=v1
 
-// jobSetWebhook for defaulting and admission.
+// jobSetWebhook for defaulting and admission of JobSet.
 type jobSetWebhook struct {
-	client  client.Client
-	decoder *admission.Decoder
+	client client.Client
 }
 
-func NewJobSetWebhook(mgrClient client.Client) (*jobSetWebhook, error) {
-	return &jobSetWebhook{client: mgrClient}, nil
-}
+var _ admission.Defaulter[*jobset.JobSet] = (*jobSetWebhook)(nil)
+var _ admission.Validator[*jobset.JobSet] = (*jobSetWebhook)(nil)
 
-// InjectDecoder injects the decoder into the jobSetWebhook.
-func (j *jobSetWebhook) InjectDecoder(d *admission.Decoder) error {
-	j.decoder = d
-	return nil
-}
-
-func (j *jobSetWebhook) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).
-		For(&jobset.JobSet{}).
-		WithDefaulter(j).
-		WithValidator(j).
+func setupWebhookForJobSet(mgr ctrl.Manager) error {
+	return ctrl.NewWebhookManagedBy(mgr, &jobset.JobSet{}).
+		WithDefaulter(&jobSetWebhook{client: mgr.GetClient()}).
+		WithValidator(&jobSetWebhook{client: mgr.GetClient()}).
 		Complete()
 }
 
-const defaultRuleNameFmt = "failurePolicyRule%v"
-
 // Default performs defaulting of jobset values as defined in the JobSet API.
-func (j *jobSetWebhook) Default(ctx context.Context, obj runtime.Object) error {
-	js, ok := obj.(*jobset.JobSet)
-	if !ok {
-		return nil
-	}
+func (j *jobSetWebhook) Default(ctx context.Context, js *jobset.JobSet) error {
 	// Default success policy to operator "All" targeting all replicatedJobs.
 	if js.Spec.SuccessPolicy == nil {
 		js.Spec.SuccessPolicy = &jobset.SuccessPolicy{Operator: jobset.OperatorAll}
@@ -163,19 +160,40 @@ func (j *jobSetWebhook) Default(ctx context.Context, obj runtime.Object) error {
 		}
 	}
 
+	// Scheduling defaulting is gated behind JobSetWorkloadAwareSchedulingAPI so
+	// that a JobSet with spec.scheduling set (which ValidateCreate rejects when
+	// the gate is disabled) is not otherwise mutated by this webhook.
+	if features.Enabled(features.JobSetWorkloadAwareSchedulingAPI) {
+		// Default scheduling policy to Gang when scheduling block is present but
+		// policy is nil. The top-level (composite) schedulingPolicy is left unset
+		// when replicatedJobs is set, since the two are mutually exclusive (see
+		// validateScheduling). Top-level scheduling combined with sequenced startup
+		// (DependsOn or InOrder) is rejected at admission by a CEL rule on the CRD,
+		// so there is no need to special-case it here.
+		if js.Spec.Scheduling != nil && js.Spec.Scheduling.SchedulingPolicy == nil &&
+			len(js.Spec.Scheduling.ReplicatedJobs) == 0 {
+			js.Spec.Scheduling.SchedulingPolicy = &schedulingv1alpha3.WorkloadCompositePodGroupSchedulingPolicy{
+				Gang: &schedulingv1alpha3.WorkloadCompositePodGroupGangSchedulingPolicy{},
+			}
+		}
+		// Gang minCount is intentionally NOT defaulted here. A webhook-materialized
+		// minCount could not be lowered while the JobSet is running, which would
+		// permanently block an ElasticJobSet from scaling down. Instead the controller computes
+		// minCount from the live represented pod count during compilation and
+		// patches PodGroup.spec.minCount in place as parallelism scales. A
+		// minCount left unset (0) in spec is treated as "controller-computed";
+		// any explicit non-zero value is the user's fixed quorum.
+	}
+
 	return nil
 }
 
 //+kubebuilder:webhook:path=/validate-jobset-x-k8s-io-v1alpha2-jobset,mutating=false,failurePolicy=fail,sideEffects=None,groups=jobset.x-k8s.io,resources=jobsets,verbs=create;update,versions=v1alpha2,name=vjobset.kb.io,admissionReviewVersions=v1
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	js, ok := obj.(*jobset.JobSet)
-	if !ok {
-		return nil, fmt.Errorf("expected a JobSet but got a %T", obj)
-	}
-
+func (j *jobSetWebhook) ValidateCreate(ctx context.Context, js *jobset.JobSet) (admission.Warnings, error) {
 	var allErrs []error
+	jobSetNameForValidation := getJobSetNameForValidation(js)
 
 	// Validate InPlaceRestart feature gate.
 	// The in-place restart API should be used only when the feature gate is enabled.
@@ -183,6 +201,12 @@ func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) 
 		if js.Spec.FailurePolicy != nil && js.Spec.FailurePolicy.RestartStrategy == jobset.InPlaceRestart {
 			allErrs = append(allErrs, fmt.Errorf("InPlaceRestart restart strategy cannot be set when InPlaceRestart feature gate is disabled"))
 		}
+	}
+
+	// Validate JobSetActiveDeadlineSeconds feature gate.
+	// activeDeadlineSeconds should be settable only when the feature gate is enabled.
+	if !features.Enabled(features.JobSetActiveDeadlineSeconds) && js.Spec.ActiveDeadlineSeconds != nil {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "activeDeadlineSeconds"), *js.Spec.ActiveDeadlineSeconds, "cannot be set when JobSetActiveDeadlineSeconds feature gate is disabled"))
 	}
 
 	// Validate that depends On can't be set for the first replicated job.
@@ -244,7 +268,7 @@ func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) 
 		}
 		// Check that the generated job names for this replicated job will be DNS 1035 compliant.
 		// Use the largest job index as it will have the longest name.
-		longestJobName := placement.GenJobName(js.Name, rJob.Name, int(rJob.Replicas-1))
+		longestJobName := placement.GenJobName(jobSetNameForValidation, rJob.Name, int(rJob.Replicas-1))
 		for _, errMessage := range validation.IsDNS1035Label(longestJobName) {
 			if strings.Contains(errMessage, dns1035MaxLengthExceededErrorMsg) {
 				errMessage = jobNameTooLongErrorMsg
@@ -257,7 +281,7 @@ func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) 
 			maxJobIndex := strconv.Itoa(int(rJob.Replicas - 1))
 			maxPodIndex := strconv.Itoa(int(*rJob.Template.Spec.Completions - 1))
 			// Add 5 char suffix to the deterministic part of the pod name to validate the full pod name is compliant.
-			longestPodName := placement.GenPodName(js.Name, rJob.Name, maxJobIndex, maxPodIndex) + "-abcde"
+			longestPodName := placement.GenPodName(jobSetNameForValidation, rJob.Name, maxJobIndex, maxPodIndex) + "-abcde"
 			for _, errMessage := range validation.IsDNS1035Label(longestPodName) {
 				if strings.Contains(errMessage, dns1035MaxLengthExceededErrorMsg) {
 					errMessage = podNameTooLongErrorMsg
@@ -301,59 +325,174 @@ func (j *jobSetWebhook) ValidateCreate(ctx context.Context, obj runtime.Object) 
 
 	// Validate failure policy
 	if js.Spec.FailurePolicy != nil {
-		failurePolicyErrors := validateFailurePolicy(js.Spec.FailurePolicy, rJobNames)
+		failurePolicyErrors := validateFailurePolicy(js, rJobNames)
 		allErrs = append(allErrs, failurePolicyErrors...)
 	}
 
 	// Validate coordinator, if set.
 	if js.Spec.Coordinator != nil {
 		allErrs = append(allErrs, validateCoordinator(js))
-		allErrs = append(allErrs, validateCoordinatorLabelValue(js))
+		allErrs = append(allErrs, validateCoordinatorLabelValue(js, jobSetNameForValidation))
 	}
 
 	// Validate VolumeClaimPolicies, if set.
 	if len(js.Spec.VolumeClaimPolicies) > 0 {
-		allErrs = append(allErrs, j.validateVolumeClaimPolicies(ctx, js, js.Spec.VolumeClaimPolicies)...)
+		allErrs = append(allErrs, j.validateVolumeClaimPolicies(ctx, js, jobSetNameForValidation, js.Spec.VolumeClaimPolicies)...)
 	}
 
-	return nil, errors.Join(allErrs...)
+	// Validate scheduling configuration.
+	allErrs = append(allErrs, validateScheduling(ctx, js, rJobNames)...)
+
+	return nil, invalidError(js.Name, allErrs)
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
-func (j *jobSetWebhook) ValidateUpdate(ctx context.Context, old, newObj runtime.Object) (admission.Warnings, error) {
-	js, ok := newObj.(*jobset.JobSet)
-	if !ok {
-		return nil, fmt.Errorf("expected a JobSet but got a %T", newObj)
+func (j *jobSetWebhook) ValidateUpdate(ctx context.Context, oldJs, newJs *jobset.JobSet) (admission.Warnings, error) {
+	mungedSpec := newJs.Spec.DeepCopy()
+	var errs field.ErrorList
+
+	// Create a map of old ReplicatedJobs by name for safe lookup
+	oldJobsMap := make(map[string]*jobset.ReplicatedJob)
+	for i := range oldJs.Spec.ReplicatedJobs {
+		rjob := &oldJs.Spec.ReplicatedJobs[i]
+		oldJobsMap[rjob.Name] = rjob
 	}
-	oldJS, ok := old.(*jobset.JobSet)
-	if !ok {
-		return nil, fmt.Errorf("expected a JobSet from old object but got a %T", old)
+
+	// Elastic JobSet Validation
+	if features.Enabled(features.ElasticJobSet) {
+		// Check if the JobSet is in a terminal state (Completed or Failed)
+		isTerminal := meta.IsStatusConditionTrue(oldJs.Status.Conditions, string(jobset.JobSetCompleted)) ||
+			meta.IsStatusConditionTrue(oldJs.Status.Conditions, string(jobset.JobSetFailed))
+
+		for index := range newJs.Spec.ReplicatedJobs {
+			newRJob := &newJs.Spec.ReplicatedJobs[index]
+
+			// Safely grab the old replicated job by Name
+			oldRJob, exists := oldJobsMap[newRJob.Name]
+			if !exists {
+				continue // Skip if this is a new job
+			}
+
+			rJobPath := field.NewPath("spec", "replicatedJobs").Index(index).Child("template", "spec")
+
+			// Only allow elastic scaling for Indexed jobs.
+			isIndexedJob := newRJob.Template.Spec.CompletionMode != nil && *newRJob.Template.Spec.CompletionMode == batchv1.IndexedCompletion
+
+			if isIndexedJob {
+				// Check if parallelism and completions have changed
+				parallelismChanged := !ptr.Equal(newRJob.Template.Spec.Parallelism, oldRJob.Template.Spec.Parallelism)
+				completionsChanged := !ptr.Equal(newRJob.Template.Spec.Completions, oldRJob.Template.Spec.Completions)
+
+				if parallelismChanged || completionsChanged {
+					if isTerminal {
+						errs = append(errs, field.Forbidden(rJobPath, "Cannot mutate parallelism or completions when JobSet is in a terminal state (Completed or Failed)"))
+					} else {
+						if parallelismChanged && newRJob.Template.Spec.Parallelism != nil && *newRJob.Template.Spec.Parallelism < 1 {
+							errs = append(errs, field.Invalid(rJobPath.Child("parallelism"), *newRJob.Template.Spec.Parallelism, "parallelism must be >= 1"))
+						}
+						if completionsChanged && newRJob.Template.Spec.Completions != nil && *newRJob.Template.Spec.Completions < 1 {
+							errs = append(errs, field.Invalid(rJobPath.Child("completions"), *newRJob.Template.Spec.Completions, "completions must be >= 1"))
+						}
+						if newRJob.Template.Spec.Parallelism != nil && newRJob.Template.Spec.Completions != nil && *newRJob.Template.Spec.Parallelism != *newRJob.Template.Spec.Completions {
+							errs = append(errs, field.Invalid(rJobPath.Child("completions"), *newRJob.Template.Spec.Completions, "completions must be equal to parallelism for Elastic Indexed Jobs"))
+						}
+					}
+				}
+
+				// Mask parallelism and completions in mungedSpec to bypass the strict immutability check
+				mungedSpec.ReplicatedJobs[index].Template.Spec.Parallelism = oldRJob.Template.Spec.Parallelism
+				mungedSpec.ReplicatedJobs[index].Template.Spec.Completions = oldRJob.Template.Spec.Completions
+			}
+		}
+
+		// spec.scheduling is immutable, but the pod count it represents isn't:
+		// ElasticJobSet scaling can shrink parallelism/completions below an
+		// already-configured Gang minCount. Re-check that invariant on every
+		// update; the minCount itself can't be lowered to compensate since
+		// spec.scheduling is immutable, so the JobSet must be scaled back up
+		// (or not scaled down further) instead.
+		errs = append(errs, validateSchedulingGangMinCounts(newJs)...)
 	}
-	mungedSpec := js.Spec.DeepCopy()
 
 	// Allow pod template to be mutated for suspended JobSets, or JobSets getting suspended.
 	// This is needed for integration with Kueue/DWS.
-	if ptr.Deref(oldJS.Spec.Suspend, false) || ptr.Deref(js.Spec.Suspend, false) {
-		for index := range js.Spec.ReplicatedJobs {
+	if ptr.Deref(oldJs.Spec.Suspend, false) || ptr.Deref(newJs.Spec.Suspend, false) {
+		for index := range newJs.Spec.ReplicatedJobs {
+			newRJob := &newJs.Spec.ReplicatedJobs[index]
+
+			// Safely grab the old replicated job by Name to prevent panics on length mismatch
+			oldRJob, exists := oldJobsMap[newRJob.Name]
+			if !exists {
+				continue
+			}
+
 			// Pod values which must be mutable for Kueue are defined here: https://github.com/kubernetes-sigs/kueue/blob/a50d395c36a2cb3965be5232162cf1fded1bdb08/apis/kueue/v1beta1/workload_types.go#L256-L260
-			mungedSpec.ReplicatedJobs[index].Template.Spec.Template.Annotations = oldJS.Spec.ReplicatedJobs[index].Template.Spec.Template.Annotations
-			mungedSpec.ReplicatedJobs[index].Template.Spec.Template.Labels = oldJS.Spec.ReplicatedJobs[index].Template.Spec.Template.Labels
-			mungedSpec.ReplicatedJobs[index].Template.Spec.Template.Spec.NodeSelector = oldJS.Spec.ReplicatedJobs[index].Template.Spec.Template.Spec.NodeSelector
-			mungedSpec.ReplicatedJobs[index].Template.Spec.Template.Spec.Tolerations = oldJS.Spec.ReplicatedJobs[index].Template.Spec.Template.Spec.Tolerations
+			mungedSpec.ReplicatedJobs[index].Template.Spec.Template.Annotations = oldRJob.Template.Spec.Template.Annotations
+			mungedSpec.ReplicatedJobs[index].Template.Spec.Template.Labels = oldRJob.Template.Spec.Template.Labels
+			mungedSpec.ReplicatedJobs[index].Template.Spec.Template.Spec.NodeSelector = oldRJob.Template.Spec.Template.Spec.NodeSelector
+			mungedSpec.ReplicatedJobs[index].Template.Spec.Template.Spec.Tolerations = oldRJob.Template.Spec.Template.Spec.Tolerations
 
 			// Pod Scheduling Gates can be updated for batch/v1 Job: https://github.com/kubernetes/kubernetes/blob/ceb58a4dbc671b9d0a2de6d73a1616bc0c299863/pkg/apis/batch/validation/validation.go#L662
-			mungedSpec.ReplicatedJobs[index].Template.Spec.Template.Spec.SchedulingGates = oldJS.Spec.ReplicatedJobs[index].Template.Spec.Template.Spec.SchedulingGates
+			mungedSpec.ReplicatedJobs[index].Template.Spec.Template.Spec.SchedulingGates = oldRJob.Template.Spec.Template.Spec.SchedulingGates
 		}
 	}
 
-	// Note that SucccessPolicy and failurePolicy are made immutable via CEL.
-	errs := apivalidation.ValidateImmutableField(mungedSpec.ReplicatedJobs, oldJS.Spec.ReplicatedJobs, field.NewPath("spec").Child("replicatedJobs"))
-	errs = append(errs, apivalidation.ValidateImmutableField(mungedSpec.ManagedBy, oldJS.Spec.ManagedBy, field.NewPath("spec").Child("managedBy"))...)
-	return nil, errs.ToAggregate()
+	// Validate JobSetActiveDeadlineSeconds feature gate: activeDeadlineSeconds can be
+	// set or changed only when the feature gate is enabled. An unchanged value is left
+	// alone so a JobSet created while the gate was on can still be updated otherwise,
+	// and clearing the field is always allowed.
+	if !features.Enabled(features.JobSetActiveDeadlineSeconds) &&
+		!ptr.Equal(newJs.Spec.ActiveDeadlineSeconds, oldJs.Spec.ActiveDeadlineSeconds) &&
+		newJs.Spec.ActiveDeadlineSeconds != nil {
+		errs = append(errs, field.Invalid(field.NewPath("spec", "activeDeadlineSeconds"), *newJs.Spec.ActiveDeadlineSeconds, "cannot be set when JobSetActiveDeadlineSeconds feature gate is disabled"))
+	}
+
+	// Note that SuccessPolicy and FailurePolicy are made immutable via CEL.
+	errs = append(errs, apivalidation.ValidateImmutableField(mungedSpec.ReplicatedJobs, oldJs.Spec.ReplicatedJobs, field.NewPath("spec").Child("replicatedJobs"))...)
+	errs = append(errs, apivalidation.ValidateImmutableField(newJs.Spec.ManagedBy, oldJs.Spec.ManagedBy, field.NewPath("spec").Child("managedBy"))...)
+
+	// Scheduling objects are deleted while a JobSet is suspended and recreated
+	// when it resumes. Allow changing the scheduling configuration only while
+	// the JobSet remains suspended and its Suspended condition has been set by
+	// the controller. In particular, do not allow a scheduling change in the
+	// same update that resumes the JobSet: that would make the controller
+	// recreate scheduling objects for a running JobSet.
+	isSuspended := ptr.Deref(oldJs.Spec.Suspend, false) &&
+		ptr.Deref(newJs.Spec.Suspend, false) &&
+		meta.IsStatusConditionTrue(oldJs.Status.Conditions, string(jobset.JobSetSuspended))
+	if !reflect.DeepEqual(newJs.Spec.Scheduling, oldJs.Spec.Scheduling) {
+		if !isSuspended {
+			errs = append(errs, field.Invalid(field.NewPath("spec").Child("scheduling"), "", "field is immutable"))
+		} else if oldJs.Spec.Scheduling != nil && newJs.Spec.Scheduling == nil {
+			// Removing scheduling wholesale would orphan the existing Jobs: the
+			// controller deletes the scheduling objects, but its stale-Job
+			// recreation path is gated on spec.scheduling being non-nil, so the
+			// resumed Jobs keep referencing a deleted PodGroup and stay Pending.
+			// Reconfiguring is allowed; clearing is not.
+			errs = append(errs, field.Forbidden(field.NewPath("spec").Child("scheduling"), "cannot be removed once set"))
+		} else {
+			// A suspended JobSet is allowed to replace spec.scheduling wholesale,
+			// so every invariant validateScheduling enforces at create time has to
+			// be re-checked here. Without this, suspend -> patch scheduling ->
+			// resume is a way around all of them, and the controller would compile
+			// a configuration the webhook would never have admitted.
+			errs = append(errs, toFieldErrorList(validateScheduling(ctx, newJs, replicatedJobNames(newJs)))...)
+		}
+	}
+
+	if len(errs) == 0 {
+		return nil, nil
+	}
+
+	return nil, apierrors.NewInvalid(
+		schema.GroupKind{Group: "jobset.x-k8s.io", Kind: "JobSet"},
+		newJs.Name,
+		errs,
+	)
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
-func (j *jobSetWebhook) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (j *jobSetWebhook) ValidateDelete(ctx context.Context, js *jobset.JobSet) (admission.Warnings, error) {
 	return nil, nil
 }
 
@@ -368,10 +507,32 @@ const (
 var ruleNameRegexp = regexp.MustCompile(ruleNameFmt)
 
 // validateFailurePolicy performs validation for jobset failure policies and returns all errors detected.
-func validateFailurePolicy(failurePolicy *jobset.FailurePolicy, rJobNames sets.Set[string]) []error {
+func validateFailurePolicy(js *jobset.JobSet, rJobNames sets.Set[string]) []error {
 	var allErrs []error
+	failurePolicy := js.Spec.FailurePolicy
 	if failurePolicy == nil {
 		return allErrs
+	}
+
+	// Check if any rule has RestartJob action and validate that no replicated job has replicas > maxReplicasPerReplicatedJob.
+	hasRestartJob := false
+	for _, rule := range failurePolicy.Rules {
+		if rule.Action == jobset.RestartJob || rule.Action == jobset.RestartJobAndIgnoreMaxRestarts {
+			hasRestartJob = true
+			break
+		}
+	}
+	if hasRestartJob {
+		if !features.Enabled(features.RestartJob) {
+			allErrs = append(allErrs, fmt.Errorf("RestartJob and RestartJobAndIgnoreMaxRestarts failure policy actions are not allowed when RestartJob feature gate is disabled"))
+			return allErrs // early return for critical error (missing feature gate)
+		}
+		for _, rJob := range js.Spec.ReplicatedJobs {
+			if rJob.Replicas > maxReplicasPerReplicatedJob {
+				allErrs = append(allErrs, fmt.Errorf("JobSet cannot have a failure policy rule with RestartJob or RestartJobAndIgnoreMaxRestarts action and a replicated job with replicas > %d", maxReplicasPerReplicatedJob))
+				break
+			}
+		}
 	}
 
 	// ruleNameToRulesWithName is used to verify that rule names are unique
@@ -447,8 +608,11 @@ func validateCoordinator(js *jobset.JobSet) error {
 
 // If spec will lead to invalid coordinator label value, return error
 // This usually happens when the JobSet name is too long
-func validateCoordinatorLabelValue(js *jobset.JobSet) error {
-	labelValue := controllers.CoordinatorEndpoint(js)
+func validateCoordinatorLabelValue(js *jobset.JobSet, jobSetName string) error {
+	jsForValidation := js.DeepCopy()
+	jsForValidation.Name = jobSetName
+
+	labelValue := controllers.CoordinatorEndpoint(jsForValidation)
 	errs := validation.IsValidLabelValue(labelValue)
 	if len(errs) > 0 {
 		return fmt.Errorf("spec will lead to invalid label value %q for coordinator label %q (long JobSet / ReplicatedJob / SubDomain name?): %s", labelValue, jobset.CoordinatorKey, strings.Join(errs, ", "))
@@ -457,7 +621,7 @@ func validateCoordinatorLabelValue(js *jobset.JobSet) error {
 }
 
 // validateVolumeClaimPolicies validates the volume claim policies for the JobSet.
-func (j *jobSetWebhook) validateVolumeClaimPolicies(ctx context.Context, js *jobset.JobSet, volumeClaimPolicies []jobset.VolumeClaimPolicy) []error {
+func (j *jobSetWebhook) validateVolumeClaimPolicies(ctx context.Context, js *jobset.JobSet, jobSetName string, volumeClaimPolicies []jobset.VolumeClaimPolicy) []error {
 	var allErrs []error
 	claimNames := sets.New[string]()
 
@@ -482,7 +646,7 @@ func (j *jobSetWebhook) validateVolumeClaimPolicies(ctx context.Context, js *job
 			}
 
 			// Validate PVC name length limits
-			pvcName := controllers.GeneratePVCName(js.Name, template.Name)
+			pvcName := controllers.GeneratePVCName(jobSetName, template.Name)
 			if len(pvcName) > maxVolumeClaimLength {
 				allErrs = append(allErrs, field.Invalid(
 					templateFieldPath.Child("name"),
@@ -511,7 +675,8 @@ func (j *jobSetWebhook) validateVolumeClaimPolicies(ctx context.Context, js *job
 					))
 				}
 				// Retention policy must be retain for the existing PVC.
-				if policy.RetentionPolicy != nil && *policy.RetentionPolicy.WhenDeleted != jobset.RetentionPolicyRetain {
+				if policy.RetentionPolicy != nil &&
+					ptr.Deref(policy.RetentionPolicy.WhenDeleted, jobset.RetentionPolicyDelete) != jobset.RetentionPolicyRetain {
 					allErrs = append(allErrs, field.Invalid(
 						fieldPath.Child("retentionPolicy").Child("whenDeleted"),
 						policy.RetentionPolicy.WhenDeleted,
@@ -597,4 +762,309 @@ func replicatedJobByName(js *jobset.JobSet, replicatedJob string) *jobset.Replic
 		}
 	}
 	return nil
+}
+
+func getJobSetNameForValidation(js *jobset.JobSet) string {
+	if js.Name != "" {
+		return js.Name
+	}
+	if js.GenerateName != "" {
+		return names.SimpleNameGenerator.GenerateName(js.GenerateName)
+	}
+	return ""
+}
+
+// toFieldErrorList converts a slice of errors (which may contain a mix of
+// *field.Error and plain errors) into a field.ErrorList. Existing *field.Error
+// values are preserved as-is; plain errors are wrapped as field.InternalError.
+func toFieldErrorList(errs []error) field.ErrorList {
+	var fieldErrs field.ErrorList
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		var fe *field.Error
+		if errors.As(err, &fe) {
+			fieldErrs = append(fieldErrs, fe)
+		} else {
+			fieldErrs = append(fieldErrs, field.InternalError(nil, err))
+		}
+	}
+	return fieldErrs
+}
+
+// validateScheduling validates the scheduling configuration of a JobSet.
+// It uses the workloadbuilder library for declarative validation and complex
+// cross-field policy checks, and adds JobSet-specific validations on top.
+func validateScheduling(ctx context.Context, js *jobset.JobSet, rJobNames sets.Set[string]) []error {
+	var allErrs []error
+
+	// If feature gate is disabled, reject any scheduling config.
+	if !features.Enabled(features.JobSetWorkloadAwareSchedulingAPI) {
+		if js.Spec.Scheduling != nil {
+			allErrs = append(allErrs, field.Forbidden(field.NewPath("spec", "scheduling"), "cannot be set when JobSetWorkloadAwareSchedulingAPI feature gate is disabled"))
+		}
+		return allErrs
+	}
+
+	if js.Spec.Scheduling == nil {
+		return nil
+	}
+	if len(js.Spec.ReplicatedJobs) == 0 {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec", "replicatedJobs"), js.Spec.ReplicatedJobs, "must contain at least one replicatedJob when scheduling is configured"))
+		return allErrs
+	}
+
+	// The JobSet controller manages scheduling itself, compiling spec.scheduling
+	// into a Workload and PodGroups and mapping each pod's schedulingGroup to
+	// them. The KEP keeps scheduling configuration centralized in spec.scheduling
+	// and off the embedded Job API, so reject both the Job template's own
+	// spec.scheduling (which would make the Job controller create a competing
+	// Workload/PodGroup per child Job) and a directly-set pod schedulingGroup.
+	for i := range js.Spec.ReplicatedJobs {
+		jobSpecPath := field.NewPath("spec", "replicatedJobs").Index(i).Child("template", "spec")
+		if js.Spec.ReplicatedJobs[i].Template.Spec.Scheduling != nil {
+			allErrs = append(allErrs, field.Forbidden(
+				jobSpecPath.Child("scheduling"),
+				"cannot be set when spec.scheduling is configured; use spec.scheduling instead",
+			))
+		}
+		if js.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.SchedulingGroup != nil {
+			allErrs = append(allErrs, field.Forbidden(
+				jobSpecPath.Child("template", "spec", "schedulingGroup"),
+				"cannot be set directly when spec.scheduling is configured; the JobSet controller manages this field",
+			))
+		}
+	}
+
+	scheduling := js.Spec.Scheduling
+	schedulingPath := field.NewPath("spec", "scheduling")
+
+	usesTopLevelAPI := scheduling.SchedulingPolicy != nil || scheduling.SchedulingConstraints != nil || scheduling.DisruptionMode != nil
+
+	// When only the per-ReplicatedJob API is used (no top-level scheduling
+	// fields set), every ReplicatedJob must be targeted by a replicatedJobs
+	// entry: there is no top-level policy for an untargeted ReplicatedJob to fall
+	// back to.
+	if !usesTopLevelAPI && len(scheduling.ReplicatedJobs) > 0 {
+		targetedNames := sets.New[string]()
+		for _, rjPolicy := range scheduling.ReplicatedJobs {
+			targetedNames.Insert(rjPolicy.TargetReplicatedJobs...)
+		}
+		for i := range js.Spec.ReplicatedJobs {
+			name := js.Spec.ReplicatedJobs[i].Name
+			if !targetedNames.Has(name) {
+				allErrs = append(allErrs, field.Invalid(
+					field.NewPath("spec", "replicatedJobs").Index(i).Child("name"),
+					name,
+					"must be targeted by a replicatedJobs entry when spec.scheduling does not set a top-level schedulingPolicy, schedulingConstraints, or disruptionMode",
+				))
+			}
+		}
+	}
+
+	// Run workloadbuilder validation for declarative checks and cross-field policy rules.
+	builderErrs := controllers.ValidateSchedulingWithBuilder(ctx, js, schedulingPath)
+	for _, fe := range builderErrs {
+		allErrs = append(allErrs, fe)
+	}
+
+	// JobSet-specific validations that the workloadbuilder doesn't cover.
+
+	// A single top-level gang PodGroup's minCount is the sum of every
+	// ReplicatedJob's represented pod count. The per-ReplicatedJob product is
+	// bounded to int32 above, but the sum across ReplicatedJobs can still
+	// overflow, so reject a total that exceeds int32 rather than deriving a
+	// saturated, unsatisfiable minCount.
+	if controllers.UseTopLevelGang(js.Spec.Scheduling) {
+		var total int64
+		for i := range js.Spec.ReplicatedJobs {
+			total += int64(jobsetutil.JobParallelism(&js.Spec.ReplicatedJobs[i])) * int64(js.Spec.ReplicatedJobs[i].Replicas)
+		}
+		if total > math.MaxInt32 {
+			allErrs = append(allErrs, field.Invalid(
+				field.NewPath("spec", "replicatedJobs"),
+				total,
+				fmt.Sprintf("the total represented pod count across all replicatedJobs must not exceed %d when top-level gang scheduling is used", math.MaxInt32),
+			))
+		}
+	}
+
+	// All ReplicatedJobs must have the same priorityClassName when using a single top-level PodGroup.
+	if controllers.UseTopLevelGang(js.Spec.Scheduling) && len(js.Spec.ReplicatedJobs) > 1 {
+		priorityPath := field.NewPath("spec", "replicatedJobs")
+		expected := js.Spec.ReplicatedJobs[0].Template.Spec.Template.Spec.PriorityClassName
+		for i := 1; i < len(js.Spec.ReplicatedJobs); i++ {
+			actual := js.Spec.ReplicatedJobs[i].Template.Spec.Template.Spec.PriorityClassName
+			if actual != expected {
+				allErrs = append(allErrs, field.Invalid(
+					priorityPath.Index(i).Child("template", "spec", "template", "spec", "priorityClassName"),
+					actual,
+					fmt.Sprintf("must match %q when top-level gang scheduling is used", expected),
+				))
+			}
+		}
+	}
+
+	// Validate replicatedJobs target valid, unique ReplicatedJob names.
+	// Duplicate targetReplicatedJobs entries within one entry's list are rejected by
+	// the API server via +listType=set, but overlap across different entries is not,
+	// so it must be checked here.
+	targeted := sets.New[string]()
+	for i, rjPolicy := range scheduling.ReplicatedJobs {
+		fieldPath := field.NewPath("spec", "scheduling", "replicatedJobs").Index(i)
+		targetPath := fieldPath.Child("targetReplicatedJobs")
+
+		// validTargetIdxs holds each valid target's index in
+		// rjPolicy.TargetReplicatedJobs so errors below point at the element the
+		// user actually wrote, even when earlier elements were skipped.
+		var validTargets []string
+		var validTargetIdxs []int
+		for j, name := range rjPolicy.TargetReplicatedJobs {
+			if !rJobNames.Has(name) {
+				allErrs = append(allErrs, field.Invalid(targetPath.Index(j), name, "does not reference a valid replicatedJob name"))
+				continue
+			}
+			if targeted.Has(name) {
+				allErrs = append(allErrs, field.Invalid(targetPath.Index(j), name, "is targeted by more than one replicatedJobs entry"))
+				continue
+			}
+			targeted.Insert(name)
+			validTargets = append(validTargets, name)
+			validTargetIdxs = append(validTargetIdxs, j)
+		}
+		if len(validTargets) == 0 {
+			continue
+		}
+
+		// job switches this entry to the Gang-of-Gangs per-Job
+		// model, where each replica of the targeted ReplicatedJob gets its own
+		// independent PodGroup. It is therefore restricted to exactly one
+		// target and is mutually exclusive with the leaf-level fields that
+		// configure a single PodGroup shared across the targeted ReplicatedJobs.
+		if rjPolicy.Job != nil {
+			if len(rjPolicy.TargetReplicatedJobs) != 1 {
+				allErrs = append(allErrs, field.Invalid(
+					targetPath, rjPolicy.TargetReplicatedJobs,
+					"must target exactly one replicatedJob when job is set",
+				))
+			}
+			if rjPolicy.SchedulingPolicy != nil || rjPolicy.SchedulingConstraints != nil || rjPolicy.DisruptionMode != nil {
+				allErrs = append(allErrs, field.Invalid(
+					fieldPath.Child("job"), true,
+					"cannot be set together with schedulingPolicy, schedulingConstraints, or disruptionMode on the same replicatedJobs entry; job replaces the single shared PodGroup those fields configure with one PodGroup per Job",
+				))
+			}
+			// Per-Job PodGroups are independent of one another, so the
+			// shared-PodGroup priorityClassName check below does not apply.
+			continue
+		}
+
+		// ReplicatedJobs sharing a single PodGroup must share one priorityClassName.
+		if len(validTargets) > 1 {
+			expected := replicatedJobPriorityClassName(js, validTargets[0])
+			for j, name := range validTargets[1:] {
+				if actual := replicatedJobPriorityClassName(js, name); actual != expected {
+					allErrs = append(allErrs, field.Invalid(
+						targetPath.Index(validTargetIdxs[j+1]),
+						name,
+						fmt.Sprintf("priorityClassName %q must match %q of the other ReplicatedJobs sharing this PodGroup", actual, expected),
+					))
+				}
+			}
+		}
+	}
+
+	for _, fe := range validateSchedulingGangMinCounts(js) {
+		allErrs = append(allErrs, fe)
+	}
+
+	return allErrs
+}
+
+// validateSchedulingGangMinCounts checks that an individual Job policy's
+// configured Gang minCount does not exceed that Job's parallelism. Composite
+// JobSet and ReplicatedJob policies use minGroupCount rather than a pod count;
+// the flattened alpha implementation derives their PodGroup minCount from the
+// represented pods.
+func validateSchedulingGangMinCounts(js *jobset.JobSet) field.ErrorList {
+	scheduling := js.Spec.Scheduling
+	if scheduling == nil {
+		return nil
+	}
+
+	var allErrs field.ErrorList
+	for i := range scheduling.ReplicatedJobs {
+		rjPolicy := &scheduling.ReplicatedJobs[i]
+
+		// job sizes each Job's own PodGroup to that Job's
+		// per-Job pod count (parallelism), not the ReplicatedJob's total
+		// pod count across every replica.
+		if rjPolicy.Job != nil {
+			jsp := rjPolicy.Job
+			if jsp.SchedulingPolicy == nil || jsp.SchedulingPolicy.Gang == nil || len(rjPolicy.TargetReplicatedJobs) != 1 {
+				continue
+			}
+			rjob := rjobByName(js, rjPolicy.TargetReplicatedJobs[0])
+			if rjob == nil {
+				continue
+			}
+			maxCount := jobsetutil.JobParallelism(rjob)
+			minCount := ptr.Deref(jsp.SchedulingPolicy.Gang.MinCount, 0)
+			if minCount > maxCount {
+				allErrs = append(allErrs, field.Invalid(
+					field.NewPath("spec", "scheduling", "replicatedJobs").Index(i).Child("job", "schedulingPolicy", "gang", "minCount"),
+					minCount,
+					fmt.Sprintf("cannot exceed the per-Job pod count (parallelism) of replicatedJob %q (%d)", rjPolicy.TargetReplicatedJobs[0], maxCount),
+				))
+			}
+		}
+	}
+
+	return allErrs
+}
+
+// replicatedJobNames returns the set of ReplicatedJob names declared on the JobSet.
+func replicatedJobNames(js *jobset.JobSet) sets.Set[string] {
+	names := sets.New[string]()
+	for i := range js.Spec.ReplicatedJobs {
+		names.Insert(js.Spec.ReplicatedJobs[i].Name)
+	}
+	return names
+}
+
+// rjobByName returns the ReplicatedJob with the given name. Callers must only
+// pass names already validated to exist in js.Spec.ReplicatedJobs.
+func rjobByName(js *jobset.JobSet, name string) *jobset.ReplicatedJob {
+	for i := range js.Spec.ReplicatedJobs {
+		if js.Spec.ReplicatedJobs[i].Name == name {
+			return &js.Spec.ReplicatedJobs[i]
+		}
+	}
+	return nil
+}
+
+// replicatedJobPriorityClassName returns the priorityClassName of the named
+// ReplicatedJob's pod template.
+func replicatedJobPriorityClassName(js *jobset.JobSet, name string) string {
+	rjob := rjobByName(js, name)
+	if rjob == nil {
+		return ""
+	}
+	return rjob.Template.Spec.Template.Spec.PriorityClassName
+}
+
+// invalidError converts a list of validation errors into an
+// *apierrors.StatusError with HTTP 422 (Unprocessable Entity) and reason
+// "Invalid". Returns nil if there are no errors.
+func invalidError(name string, errs []error) error {
+	fieldErrs := toFieldErrorList(errs)
+	if len(fieldErrs) == 0 {
+		return nil
+	}
+	return apierrors.NewInvalid(
+		schema.GroupKind{Group: "jobset.x-k8s.io", Kind: "JobSet"},
+		name,
+		fieldErrs,
+	)
 }
